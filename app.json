@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Workout Tracker",
+    "slug": "workout-tracker-greg2024",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0a"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "com.gregorio.workouttracker"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gregorio.workouttracker"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "939188f5-1557-4fcc-add8-6b9486cf3468"
+      }
+    },
+    "owner": "coachcoach"
+  }
+}
