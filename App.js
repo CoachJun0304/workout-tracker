@@ -4,10 +4,17 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Provider as PaperProvider, MD3DarkTheme } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
+import { Text, ActivityIndicator, View, StyleSheet } from 'react-native';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
-import { ActivityIndicator, View } from 'react-native';
+import { COLORS, FONTS, SIZES } from './src/theme';
 
+// Auth
 import LoginScreen from './src/screens/auth/LoginScreen';
+
+// Shared — Pending
+import PendingScreen from './src/screens/auth/PendingScreen';
+
+// Coach
 import DashboardScreen from './src/screens/coach/DashboardScreen';
 import ClientsScreen from './src/screens/coach/ClientsScreen';
 import ClientDetailScreen from './src/screens/coach/ClientDetailScreen';
@@ -17,6 +24,16 @@ import AssignProgramScreen from './src/screens/coach/AssignProgramScreen';
 import LogWorkoutScreen from './src/screens/coach/LogWorkoutScreen';
 import ProgressScreen from './src/screens/shared/ProgressScreen';
 import RecordsScreen from './src/screens/shared/RecordsScreen';
+import CoachHealthScreen from './src/screens/coach/CoachHealthScreen';
+import ApproveCoachesScreen from './src/screens/coach/ApproveCoachesScreen';
+
+// Client
+import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
+import ClientWorkoutScreen from './src/screens/client/ClientWorkoutScreen';
+import ClientLogScreen from './src/screens/client/ClientLogScreen';
+import ClientProgressScreen from './src/screens/client/ClientProgressScreen';
+import ClientRecordsScreen from './src/screens/client/ClientRecordsScreen';
+import HealthScreen from './src/screens/shared/HealthScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -25,69 +42,176 @@ const theme = {
   ...MD3DarkTheme,
   colors: {
     ...MD3DarkTheme.colors,
-    primary: '#6C63FF',
-    secondary: '#00B894',
-    background: '#0a0a0a',
-    surface: '#1a1a1a',
-    surfaceVariant: '#2a2a2a',
+    primary: COLORS.roseGold,
+    secondary: COLORS.roseGoldLight,
+    background: COLORS.darkBg,
+    surface: COLORS.darkCard,
+    surfaceVariant: COLORS.darkCard2,
   },
 };
 
-function ClientsStack() {
+const stackOptions = {
+  headerStyle: { backgroundColor: COLORS.darkCard },
+  headerTintColor: COLORS.white,
+  headerTitleStyle: { fontWeight: '700' },
+};
+
+// ── COACH STACK ──────────────────────────────────────────
+function CoachClientsStack() {
   return (
-    <Stack.Navigator screenOptions={{
-      headerStyle: { backgroundColor: '#1a1a1a' },
-      headerTintColor: '#fff'
-    }}>
-      <Stack.Screen name="ClientsList" component={ClientsScreen} options={{ title: 'Clients' }} />
-      <Stack.Screen name="ClientDetail" component={ClientDetailScreen} options={{ title: 'Client Profile' }} />
-      <Stack.Screen name="AddClient" component={AddClientScreen} options={{ title: 'Add Client' }} />
-      <Stack.Screen name="AssignProgram" component={AssignProgramScreen} options={{ title: 'Assign Program' }} />
-      <Stack.Screen name="LogWorkout" component={LogWorkoutScreen} options={{ title: 'Log Workout' }} />
-      <Stack.Screen name="Progress" component={ProgressScreen} options={{ title: 'Progress' }} />
-      <Stack.Screen name="Records" component={RecordsScreen} options={{ title: 'Personal Records' }} />
+    <Stack.Navigator screenOptions={stackOptions}>
+      <Stack.Screen name="ClientsList" component={ClientsScreen}
+        options={{ title: 'Clients' }} />
+      <Stack.Screen name="ClientDetail" component={ClientDetailScreen}
+        options={{ title: 'Client Profile' }} />
+      <Stack.Screen name="AddClient" component={AddClientScreen}
+        options={{ title: 'Add Client' }} />
+      <Stack.Screen name="AssignProgram" component={AssignProgramScreen}
+        options={{ title: 'Assign Program' }} />
+      <Stack.Screen name="LogWorkout" component={LogWorkoutScreen}
+        options={{ title: 'Log Workout' }} />
+      <Stack.Screen name="Progress" component={ProgressScreen}
+        options={{ title: 'Progress' }} />
+      <Stack.Screen name="Records" component={RecordsScreen}
+        options={{ title: 'Personal Records' }} />
+      <Stack.Screen name="CoachHealth" component={CoachHealthScreen}
+        options={{ title: 'Health & Nutrition' }} />
     </Stack.Navigator>
   );
 }
 
-function MainTabs() {
+function CoachTabs() {
+  const { isHeadCoach } = useAuth();
   return (
     <Tab.Navigator screenOptions={{
-      tabBarStyle: { backgroundColor: '#1a1a1a', borderTopColor: '#333' },
-      tabBarActiveTintColor: '#6C63FF',
-      tabBarInactiveTintColor: '#888',
-      headerStyle: { backgroundColor: '#1a1a1a' },
-      headerTintColor: '#fff',
+      tabBarStyle: {
+        backgroundColor: COLORS.darkCard,
+        borderTopColor: COLORS.darkBorder,
+        height: 60, paddingBottom: 8,
+      },
+      tabBarActiveTintColor: COLORS.roseGold,
+      tabBarInactiveTintColor: COLORS.textMuted,
+      tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+      headerStyle: { backgroundColor: COLORS.darkCard },
+      headerTintColor: COLORS.white,
+      headerTitleStyle: { fontWeight: '700' },
     }}>
       <Tab.Screen name="Dashboard" component={DashboardScreen}
-        options={{ tabBarLabel: 'Dashboard', title: '💪 Workout Tracker' }} />
-      <Tab.Screen name="Clients" component={ClientsStack}
-        options={{ tabBarLabel: 'Clients', headerShown: false }} />
+        options={{
+          title: 'FitCoach Pro',
+          tabBarLabel: 'Dashboard',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>📊</Text>,
+        }} />
+      <Tab.Screen name="Clients" component={CoachClientsStack}
+        options={{
+          tabBarLabel: 'Clients',
+          headerShown: false,
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>👥</Text>,
+        }} />
       <Tab.Screen name="Templates" component={TemplatesScreen}
-        options={{ tabBarLabel: 'Templates', title: 'Workout Templates' }} />
+        options={{
+          title: 'Programs',
+          tabBarLabel: 'Programs',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>📋</Text>,
+        }} />
+      {isHeadCoach && (
+        <Tab.Screen name="Approve" component={ApproveCoachesScreen}
+          options={{
+            title: 'Approvals',
+            tabBarLabel: 'Approvals',
+            tabBarIcon: ({ color }) =>
+              <Text style={{ fontSize: 20, color }}>✅</Text>,
+          }} />
+      )}
     </Tab.Navigator>
   );
 }
 
+// ── CLIENT STACK ─────────────────────────────────────────
+function ClientStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="ClientHome" component={ClientHomeScreen} />
+      <Stack.Screen name="ClientWorkout" component={ClientWorkoutScreen}
+        options={{ ...stackOptions, headerShown: true, title: "Today's Workout" }} />
+      <Stack.Screen name="ClientLog" component={ClientLogScreen}
+        options={{ ...stackOptions, headerShown: true, title: 'Log Workout' }} />
+    </Stack.Navigator>
+  );
+}
+
+function ClientTabs() {
+  return (
+    <Tab.Navigator screenOptions={{
+      tabBarStyle: {
+        backgroundColor: COLORS.darkCard,
+        borderTopColor: COLORS.darkBorder,
+        height: 60, paddingBottom: 8,
+      },
+      tabBarActiveTintColor: COLORS.roseGold,
+      tabBarInactiveTintColor: COLORS.textMuted,
+      tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+      headerShown: false,
+    }}>
+      <Tab.Screen name="Home" component={ClientStack}
+        options={{
+          tabBarLabel: 'Workouts',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>🏋️</Text>,
+        }} />
+      <Tab.Screen name="Progress" component={ClientProgressScreen}
+        options={{
+          tabBarLabel: 'Progress',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>📈</Text>,
+        }} />
+      <Tab.Screen name="Health" component={HealthScreen}
+        options={{
+          tabBarLabel: 'Health',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>🥗</Text>,
+        }} />
+      <Tab.Screen name="Records" component={ClientRecordsScreen}
+        options={{
+          tabBarLabel: 'Records',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>🏆</Text>,
+        }} />
+    </Tab.Navigator>
+  );
+}
+
+// ── ROOT NAVIGATOR ───────────────────────────────────────
 function AppNavigator() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading, isCoach, isClient, isPending } = useAuth();
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a' }}>
-        <ActivityIndicator size="large" color="#6C63FF" />
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={COLORS.roseGold} />
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
 
   return (
     <NavigationContainer>
-      {user
-        ? <MainTabs />
-        : <Stack.Navigator screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="Login" component={LoginScreen} />
-          </Stack.Navigator>
-      }
+      {!user ? (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Login" component={LoginScreen} />
+        </Stack.Navigator>
+      ) : isPending ? (
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Pending" component={PendingScreen} />
+        </Stack.Navigator>
+      ) : isCoach ? (
+        <CoachTabs />
+      ) : (
+        <ClientTabs />
+      )}
     </NavigationContainer>
   );
 }
@@ -102,3 +226,14 @@ export default function App() {
     </PaperProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1, justifyContent: 'center',
+    alignItems: 'center', backgroundColor: COLORS.darkBg,
+  },
+  loadingText: {
+    color: COLORS.textSecondary,
+    marginTop: 12, fontSize: SIZES.md,
+  },
+});
