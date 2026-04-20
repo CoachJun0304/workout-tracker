@@ -24,41 +24,42 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  async function fetchProfile(authUserId) {
-    try {
-      let { data } = await supabase
-        .from('profiles').select('*').eq('auth_id', authUserId).single();
+async function fetchProfile(authUserId) {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUserId)
+      .single();
 
-      if (!data) {
-        const res = await supabase
-          .from('profiles').select('*').eq('id', authUserId).single();
-        data = res.data;
+    if (data) {
+      setProfile(data);
+    } else {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user) {
+        const newProfile = {
+          id: userData.user.id,
+          name: userData.user.user_metadata?.name ||
+                userData.user.email.split('@')[0],
+          email: userData.user.email,
+          role: userData.user.user_metadata?.role || 'client',
+          gender: userData.user.user_metadata?.gender || 'Male',
+          status: 'active',
+          unit_preference: 'kg',
+        };
+        const { data: created } = await supabase
+          .from('profiles')
+          .insert(newProfile)
+          .select()
+          .single();
+        setProfile(created || newProfile);
       }
-
-      if (data) {
-        setProfile(data);
-      } else {
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData?.user) {
-          const newProfile = {
-            auth_id: userData.user.id,
-            name: userData.user.user_metadata?.name || userData.user.email.split('@')[0],
-            email: userData.user.email,
-            role: userData.user.user_metadata?.role || 'client',
-            gender: userData.user.user_metadata?.gender || 'Male',
-            status: 'active',
-            unit_preference: 'kg',
-          };
-          const { data: created } = await supabase
-            .from('profiles').insert(newProfile).select().single();
-          setProfile(created || newProfile);
-        }
-      }
-    } catch (e) {
-      console.log('Profile error:', e.message);
     }
-    setLoading(false);
+  } catch (e) {
+    console.log('Profile error:', e.message);
   }
+  setLoading(false);
+}
 
   async function refreshProfile() {
     if (user) await fetchProfile(user.id);
@@ -70,22 +71,22 @@ export function AuthProvider({ children }) {
   }
 
   async function signUp(email, password, name, role = 'client', gender = 'Male') {
-    const { data, error } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { name, role, gender } }
-    });
+  const { data, error } = await supabase.auth.signUp({
+    email, password,
+    options: { data: { name, role, gender } }
+  });
 
-    if (data?.user && !error) {
-      await supabase.from('profiles').upsert({
-        auth_id: data.user.id,
-        name, email, role, gender,
-        status: 'active',
-        unit_preference: 'kg',
-      }, { onConflict: 'auth_id' });
-    }
-
-    return { error };
+  if (data?.user && !error) {
+    await supabase.from('profiles').upsert({
+      id: data.user.id,
+      name, email, role, gender,
+      status: 'active',
+      unit_preference: 'kg',
+    }, { onConflict: 'id' });
   }
+
+  return { error };
+}
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -93,12 +94,12 @@ export function AuthProvider({ children }) {
   }
 
   async function updateUnitPreference(unit) {
-    if (!profile) return;
-    const idField = profile.auth_id ? 'auth_id' : 'id';
-    const idValue = profile.auth_id || profile.id;
-    await supabase.from('profiles').update({ unit_preference: unit }).eq(idField, idValue);
-    setProfile(p => ({ ...p, unit_preference: unit }));
-  }
+  if (!profile) return;
+  await supabase.from('profiles')
+    .update({ unit_preference: unit })
+    .eq('id', profile.id);
+  setProfile(p => ({ ...p, unit_preference: unit }));
+}
 
   const isCoach = profile?.role === 'coach';
   const isClient = profile?.role === 'client';
