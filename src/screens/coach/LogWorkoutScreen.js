@@ -17,7 +17,14 @@ const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
 
 export default function LogWorkoutScreen({ route, navigation }) {
-  const { client } = route.params;
+  const { client } = route.params || {};
+if (!client) {
+  return (
+    <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: COLORS.white }}>No client selected</Text>
+    </View>
+  );
+}
   const { user, unit } = useAuth();
   const [selectedDay, setSelectedDay] = useState(
     DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]

@@ -14,7 +14,14 @@ const W = Dimensions.get('window').width;
 const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 export default function CoachHealthScreen({ route }) {
-  const { client } = route.params;
+  const { client } = route.params || {};
+if (!client) {
+  return (
+    <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: COLORS.white }}>No client selected</Text>
+    </View>
+  );
+}
   const { profile } = useAuth();
   const [tab, setTab] = useState('weight');
   const [weightLogs, setWeightLogs] = useState([]);
