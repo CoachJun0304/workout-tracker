@@ -1,6 +1,5 @@
-import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert, Platform } from 'react-native';
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert, Platform } from 'react-native';
 import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
