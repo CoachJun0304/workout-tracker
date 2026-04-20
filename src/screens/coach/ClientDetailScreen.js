@@ -5,7 +5,8 @@ import { Text } from 'react-native-paper';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 
 export default function ClientDetailScreen({ route, navigation }) {
-  const { client } = route.params;
+  const { client } = route.params || {};
+if (!client) return null;
 
   const InfoRow = ({ label, value }) => (
     <View style={styles.infoRow}>

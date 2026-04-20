@@ -9,7 +9,7 @@ const GOALS = ['Muscle Gain','Fat Loss','Strength','Athletic','General Fitness']
 const GENDERS = ['Male','Female','Other'];
 
 export default function ClientDetailScreen({ route, navigation }) {
-  const { client } = route.params;
+  const { client } = route.params || {};
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     name: client.name || '',

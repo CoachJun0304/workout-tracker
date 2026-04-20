@@ -11,7 +11,7 @@ import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
 export default function WorkoutRescheduleScreen({ route, navigation }) {
-  const { program, currentDay, currentDate } = route.params;
+  const { program, currentDay, currentDate } = route.params || {};
   const { profile } = useAuth();
   const [status, setStatus] = useState('missed'); // 'missed' | 'moved'
   const [rescheduleDay, setRescheduleDay] = useState('');
@@ -45,15 +45,15 @@ export default function WorkoutRescheduleScreen({ route, navigation }) {
       notes: notes.trim() || null,
     });
     setLoading(false);
-    if (error) { Alert.alert('Error', error.message); return; }
+    if (error) { showAlert('Error', error.message); return; }
 
     if (status === 'moved' && rescheduleDay) {
-      Alert.alert('✅ Workout Moved!',
+      showAlert('✅ Workout Moved!',
         `${currentDay}'s workout has been moved to ${rescheduleDay} (${rescheduleDate || 'date TBD'}).\n\nThe exercises remain the same.`, [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
     } else {
-      Alert.alert('✅ Marked as Missed',
+      showAlert('✅ Marked as Missed',
         `${currentDay}'s workout has been marked as missed.`, [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
@@ -61,7 +61,7 @@ export default function WorkoutRescheduleScreen({ route, navigation }) {
   }
 
   async function deleteChange(id) {
-    Alert.alert('Delete', 'Remove this record?', [
+    showAlert('Delete', 'Remove this record?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         await supabase.from('workout_schedule_changes').delete().eq('id', id);
