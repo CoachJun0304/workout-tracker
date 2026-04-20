@@ -16,7 +16,8 @@ const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
 
 export default function AssignProgramScreen({ route, navigation }) {
-  const { client } = route.params;
+  const { client } = route.params || {};
+if (!client) return null;
   const { profile } = useAuth();
   const [tab, setTab] = useState('saved');
   const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
