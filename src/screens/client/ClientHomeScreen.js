@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, Modal, TextInput as RNTextInput, Platform
+  RefreshControl, Alert, Platform
 } from 'react-native';
 import { Text, TextInput } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';

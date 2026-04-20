@@ -1,8 +1,8 @@
-import { Platform } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, Modal, TextInput as RNTextInput, Dimensions
+  Alert, Modal, TextInput as RNTextInput,
+  Dimensions, Platform
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { LineChart } from 'react-native-chart-kit';
