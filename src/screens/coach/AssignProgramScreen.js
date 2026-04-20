@@ -197,7 +197,7 @@ const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
     (exs||[]).forEach(ex => { if (!g[ex.day]) g[ex.day]=[]; g[ex.day].push(ex); });
     return g;
   };
-
+if (!client) return null;
   return (
     <View style={styles.container}>
       {/* Client banner */}
@@ -351,6 +351,7 @@ const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
                       const globalIdx = exercises.findIndex(
                         e => e.day===ex.day && e.exercise_name===ex.exercise_name
                       );
+                      if (!client) return null;
                       return (
                         <View key={i} style={styles.exItem}>
                           <View style={styles.exReorder}>

@@ -231,7 +231,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
     { key:'feedback', label:'💬 Feedback' },
     ...(isFemale ? [{ key:'cycle', label:'🌸 Cycle' }] : []),
   ];
-
+if (!client) return null;
   return (
     <View style={styles.container}>
       <View style={styles.clientBanner}>
@@ -309,6 +309,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
                   const diff = prev
                     ? (log.weight_kg - prev.weight_kg).toFixed(1)
                     : null;
+                    if (!client) return null;
                   return (
                     <View key={log.id} style={styles.logRow}>
                       <View style={{ flex:1 }}>
@@ -405,6 +406,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
                   const bg = cell.log ? getMacroColor(cell.log) : 'transparent';
                   const border = cell.log ? getMacroBorderColor(cell.log) : COLORS.darkBorder;
                   const isToday = cell.date === todayStr;
+                  if (!client) return null;
                   return (
                     <View key={cell.date} style={styles.calCell}>
                       <View style={[styles.calCellInner, {
@@ -568,6 +570,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
                 currentCycle.cycle_length
               );
               const isToday = cell.date === todayStr;
+              if (!client) return null;
               return (
                 <TouchableOpacity key={cell.date} style={styles.smallCalCell}
                   onPress={() => {
