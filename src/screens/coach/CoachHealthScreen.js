@@ -13,16 +13,32 @@ import { getPhaseForDate, CYCLE_PHASES } from '../../data/cycleData';
 const W = Dimensions.get('window').width;
 const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-export default function CoachHealthScreen({ route }) {
+export default function LogWorkoutScreen({ route, navigation }) {
   const { client } = route.params || {};
-if (!client) {
-  return (
-    <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
-      <Text style={{ color: COLORS.white }}>No client selected</Text>
-    </View>
+  const { user, unit } = useAuth();
+  const [selectedDay, setSelectedDay] = useState(
+    DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
   );
-}
-  const { profile } = useAuth();
+  const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
+  const [selectedWeek, setSelectedWeek] = useState('1');
+  const [sessionNote, setSessionNote] = useState('');
+  const [sets, setSets] = useState([
+    { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
+  ]);
+  const [loading, setLoading] = useState(false);
+  const [showAddEx, setShowAddEx] = useState(false);
+  const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
+  const [program, setProgram] = useState(null);
+
+  useEffect(() => { if (client) fetchClientProgram(); }, []);
+
+  if (!client) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0D0D0D', justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: 'white' }}>No client selected. Go back and select a client.</Text>
+      </View>
+    );
+  }
   const [tab, setTab] = useState('weight');
   const [weightLogs, setWeightLogs] = useState([]);
   const [macroLogs, setMacroLogs] = useState([]);

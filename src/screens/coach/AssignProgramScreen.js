@@ -16,9 +16,32 @@ const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
 
 export default function AssignProgramScreen({ route, navigation }) {
+  export default function LogWorkoutScreen({ route, navigation }) {
   const { client } = route.params || {};
-if (!client) return null;
-  const { profile } = useAuth();
+  const { user, unit } = useAuth();
+  const [selectedDay, setSelectedDay] = useState(
+    DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
+  );
+  const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
+  const [selectedWeek, setSelectedWeek] = useState('1');
+  const [sessionNote, setSessionNote] = useState('');
+  const [sets, setSets] = useState([
+    { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
+  ]);
+  const [loading, setLoading] = useState(false);
+  const [showAddEx, setShowAddEx] = useState(false);
+  const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
+  const [program, setProgram] = useState(null);
+
+  useEffect(() => { if (client) fetchClientProgram(); }, []);
+
+  if (!client) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0D0D0D', justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: 'white' }}>No client selected. Go back and select a client.</Text>
+      </View>
+    );
+  }
   const [tab, setTab] = useState('saved');
   const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
   const [savedTemplates, setSavedTemplates] = useState([]);
