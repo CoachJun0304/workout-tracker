@@ -25,7 +25,6 @@ export default function LogWorkoutScreen({ route, navigation }) {
   const [sets, setSets] = useState([
     { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
   ]);
-  const [loading, setLoading] = useState(false);
   const [showAddEx, setShowAddEx] = useState(false);
   const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
   const [program, setProgram] = useState(null);
@@ -57,7 +56,6 @@ export default function LogWorkoutScreen({ route, navigation }) {
   const [targetInput, setTargetInput] = useState({ protein:'', carbs:'', fats:'' });
   const [feedbackText, setFeedbackText] = useState('');
   const [clientUnit, setClientUnit] = useState(client?.unit_preference || 'kg');
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => { fetchAll(); }, []);
 
