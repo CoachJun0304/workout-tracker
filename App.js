@@ -1,3 +1,4 @@
+import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -144,6 +145,33 @@ function ClientStack() {
 }
 
 function ClientTabs() {
+  function ClientTabs() {
+  return (
+    <Tab.Navigator screenOptions={{
+      tabBarStyle: { backgroundColor: COLORS.darkCard, borderTopColor: COLORS.darkBorder, height: 60, paddingBottom: 8 },
+      tabBarActiveTintColor: COLORS.roseGold,
+      tabBarInactiveTintColor: COLORS.textMuted,
+      tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+      headerShown: false,
+    }}>
+      <Tab.Screen name="Home" component={ClientStack}
+        options={{ tabBarLabel: 'Workouts',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏋️</Text> }} />
+      <Tab.Screen name="MyProgress" component={ClientProgressScreen}
+        options={{ tabBarLabel: 'Progress',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📈</Text> }} />
+      <Tab.Screen name="MyHealth" component={HealthScreen}
+        options={{ tabBarLabel: 'Health',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🥗</Text> }} />
+      <Tab.Screen name="MyRecords" component={ClientRecordsScreen}
+        options={{ tabBarLabel: 'Records',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏆</Text> }} />
+      <Tab.Screen name="MyProfile" component={ClientProfileScreen}
+        options={{ tabBarLabel: 'Profile',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>👤</Text> }} />
+    </Tab.Navigator>
+  );
+}
   return (
     <Tab.Navigator screenOptions={{
       tabBarStyle: {
@@ -236,4 +264,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 12, fontSize: SIZES.md,
   },
-});
+});import WorkoutRescheduleScreen from './src/screens/shared/WorkoutRescheduleScreen';
+
+// Inside ClientStack:
+<Stack.Screen name="Reschedule" component={WorkoutRescheduleScreen} options={{ title: 'Workout Schedule' }} />

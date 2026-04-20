@@ -1,28 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
-import { Text, Surface } from 'react-native-paper';
+import { View, ScrollView, StyleSheet } from 'react-native';
+import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../context/AuthContext';
+import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
+import { toDisplay, unitLabel, estimated1RM } from '../../utils/unitUtils';
 
 const MUSCLE_ORDER = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
-                      'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core'];
+  'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
+
 const MUSCLE_COLORS = {
   'Chest':'#C0392B','Back':'#2980B9','Quads':'#27AE60','Hamstrings':'#16A085',
   'Glutes':'#8E44AD','Calves':'#2C3E50','Front Delts':'#E67E22','Side Delts':'#D35400',
   'Rear Delts':'#CA6F1E','Biceps':'#1ABC9C','Triceps':'#2ECC71','Core':'#F39C12',
+  'Full Body':'#7F77DD',
 };
 
 export default function RecordsScreen({ route }) {
-  const { client } = route.params;
+  const clientParam = route?.params?.client;
+  const { profile, unit } = useAuth();
+  const clientId = clientParam?.id || profile?.id;
+  const ul = unitLabel(unit);
   const [records, setRecords] = useState({});
+  const [totalPRs, setTotalPRs] = useState(0);
 
-  useEffect(() => { fetchRecords(); }, []);
+  useEffect(() => { fetchRecords(); }, [clientId]);
 
   async function fetchRecords() {
     const { data } = await supabase
       .from('workout_logs').select('*')
-      .eq('client_id', client.id).eq('set_type', 'working')
+      .eq('client_id', clientId)
+      .eq('set_type', 'working')
+      .not('weight_kg', 'is', null)
       .order('weight_kg', { ascending: false });
+
     if (data) {
+      // Auto-compute PRs per exercise
       const prs = {};
       data.forEach(log => {
         if (!log.weight_kg) return;
@@ -30,53 +43,81 @@ export default function RecordsScreen({ route }) {
           prs[log.exercise_name] = log;
         }
       });
+
+      // Group by muscle
       const grouped = {};
       Object.values(prs).forEach(pr => {
         const muscle = pr.muscle_group || 'Other';
         if (!grouped[muscle]) grouped[muscle] = [];
         grouped[muscle].push(pr);
       });
-      Object.keys(grouped).forEach(m => grouped[m].sort((a, b) => b.weight_kg - a.weight_kg));
+
+      // Sort within each group by weight desc
+      Object.keys(grouped).forEach(m =>
+        grouped[m].sort((a,b) => b.weight_kg - a.weight_kg)
+      );
+
       setRecords(grouped);
+      setTotalPRs(Object.values(prs).length);
     }
   }
 
   const orderedMuscles = [
     ...MUSCLE_ORDER.filter(m => records[m]),
-    ...Object.keys(records).filter(m => !MUSCLE_ORDER.includes(m))
+    ...Object.keys(records).filter(m => !MUSCLE_ORDER.includes(m)),
   ];
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Surface style={styles.clientBanner}>
-        <Text style={styles.clientName}>{client.name}</Text>
-        <Text style={styles.subtitle}>🏆 Personal Records</Text>
-      </Surface>
+      <Text style={styles.title}>
+        {clientParam ? `${clientParam.name}'s Records` : '🏆 My Personal Records'}
+      </Text>
+      <Text style={styles.subtitle}>
+        Auto-computed from all workout logs · {totalPRs} exercises tracked
+      </Text>
+
       {orderedMuscles.length === 0
-        ? <Surface style={styles.empty}><Text style={styles.emptyText}>No records yet — start logging!</Text></Surface>
+        ? <View style={styles.empty}>
+            <Text style={styles.emptyEmoji}>🏆</Text>
+            <Text style={styles.emptyText}>No records yet</Text>
+            <Text style={styles.emptySub}>Start logging workouts to set your PRs</Text>
+          </View>
         : orderedMuscles.map(muscle => (
           <View key={muscle}>
-            <View style={[styles.muscleBanner, { borderLeftColor: MUSCLE_COLORS[muscle] || '#6C63FF' }]}>
-              <Text style={[styles.muscleTitle, { color: MUSCLE_COLORS[muscle] || '#6C63FF' }]}>
+            <View style={[styles.muscleHeader,
+              { borderLeftColor: MUSCLE_COLORS[muscle] || COLORS.roseGold }]}>
+              <Text style={[styles.muscleTitle,
+                { color: MUSCLE_COLORS[muscle] || COLORS.roseGold }]}>
                 {muscle.toUpperCase()}
               </Text>
             </View>
-            {records[muscle].map((pr, i) => (
-              <Surface key={i} style={styles.prCard}>
-                <View style={styles.prRow}>
-                  <View>
-                    <Text style={styles.prExercise}>{pr.exercise_name}</Text>
-                    <Text style={styles.prDate}>
-                      {new Date(pr.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </Text>
-                  </View>
-                  <View style={styles.prStats}>
-                    <Text style={styles.prWeight}>{pr.weight_kg}kg</Text>
-                    <Text style={styles.prReps}>× {pr.reps} reps</Text>
+            {records[muscle].map((pr, i) => {
+              const e1rm = estimated1RM(pr.weight_kg, pr.reps);
+              return (
+                <View key={i} style={styles.prCard}>
+                  <View style={styles.prRow}>
+                    <View style={{ flex:1 }}>
+                      <Text style={styles.prExercise}>{pr.exercise_name}</Text>
+                      <Text style={styles.prDate}>
+                        {new Date(pr.logged_at).toLocaleDateString('en-US',
+                          { month:'short', day:'numeric', year:'numeric' })}
+                      </Text>
+                    </View>
+                    <View style={styles.prStats}>
+                      <Text style={styles.prWeight}>
+                        {toDisplay(pr.weight_kg, unit)}{ul}
+                      </Text>
+                      <Text style={styles.prReps}>× {pr.reps} reps</Text>
+                      {e1rm && (
+                        <Text style={styles.prE1rm}>
+                          ~{toDisplay(e1rm, unit)}{ul} 1RM
+                        </Text>
+                      )}
+                    </View>
                   </View>
                 </View>
-              </Surface>
-            ))}
+              );
+            })}
           </View>
         ))
       }
@@ -85,20 +126,22 @@ export default function RecordsScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a' },
-  content: { padding: 16, paddingBottom: 40 },
-  clientBanner: { padding: 16, borderRadius: 12, backgroundColor: '#1a1a1a', marginBottom: 16 },
-  clientName: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  subtitle: { color: '#FDCB6E', fontSize: 13, marginTop: 2 },
-  muscleBanner: { borderLeftWidth: 3, paddingLeft: 12, marginTop: 16, marginBottom: 8 },
-  muscleTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  prCard: { padding: 14, borderRadius: 10, backgroundColor: '#1a1a1a', marginBottom: 6 },
-  prRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  prExercise: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  prDate: { color: '#888', fontSize: 11, marginTop: 2 },
-  prStats: { alignItems: 'flex-end' },
-  prWeight: { color: '#FDCB6E', fontSize: 18, fontWeight: 'bold' },
-  prReps: { color: '#888', fontSize: 12 },
-  empty: { padding: 32, borderRadius: 12, backgroundColor: '#1a1a1a', alignItems: 'center' },
-  emptyText: { color: '#888', textAlign: 'center' },
+  container: { flex:1, backgroundColor: COLORS.darkBg },
+  content: { padding:16, paddingBottom:40, paddingTop:20 },
+  title: { fontSize: SIZES.xxxl, ...FONTS.heavy, color: COLORS.white, marginBottom:4 },
+  subtitle: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom:20 },
+  muscleHeader: { borderLeftWidth:3, paddingLeft:12, marginTop:16, marginBottom:8 },
+  muscleTitle: { fontSize: SIZES.sm, ...FONTS.bold, letterSpacing:1 },
+  prCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding:14, marginBottom:6, borderWidth:1, borderColor: COLORS.darkBorder },
+  prRow: { flexDirection:'row', alignItems:'center' },
+  prExercise: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.md },
+  prDate: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop:2 },
+  prStats: { alignItems:'flex-end' },
+  prWeight: { color: COLORS.roseGold, fontSize: SIZES.xl, ...FONTS.bold },
+  prReps: { color: COLORS.textMuted, fontSize: SIZES.sm },
+  prE1rm: { color: '#4ECDC4', fontSize: SIZES.xs, marginTop:2 },
+  empty: { alignItems:'center', paddingVertical:60 },
+  emptyEmoji: { fontSize:64, marginBottom:16 },
+  emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xl },
+  emptySub: { color: COLORS.textMuted, fontSize: SIZES.md, marginTop:6 },
 });
