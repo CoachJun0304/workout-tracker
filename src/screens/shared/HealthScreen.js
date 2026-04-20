@@ -74,7 +74,7 @@ export default function HealthScreen() {
   // ── WEIGHT ─────────────────────────────────────────────
 
   async function saveWeight() {
-    if (!weightInput.trim()) { Alert.alert('Error', 'Enter your weight'); return; }
+    if (!weightInput.trim()) { showAlert('Error', 'Enter your weight'); return; }
     setLoading(true);
     if (editingWeight) {
       await supabase.from('weight_logs').update({
@@ -103,7 +103,7 @@ export default function HealthScreen() {
   }
 
   async function deleteWeight(id) {
-    Alert.alert('Delete', 'Remove this weigh-in?', [
+    showAlert('Delete', 'Remove this weigh-in?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         await supabase.from('weight_logs').delete().eq('id', id);
@@ -210,7 +210,7 @@ export default function HealthScreen() {
   }
 
   async function deleteFoodEntry(id, date) {
-    Alert.alert('Delete', 'Remove this food entry?', [
+    showAlert('Delete', 'Remove this food entry?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         await supabase.from('food_entries').delete().eq('id', id);
@@ -297,7 +297,7 @@ export default function HealthScreen() {
   // ── CYCLE ──────────────────────────────────────────────
 
   async function saveCycle() {
-    if (!cycleInput.start_date) { Alert.alert('Error', 'Enter the start date'); return; }
+    if (!cycleInput.start_date) { showAlert('Error', 'Enter the start date'); return; }
     setLoading(true);
     await supabase.from('menstrual_cycles').insert({
       client_id: profile.id,

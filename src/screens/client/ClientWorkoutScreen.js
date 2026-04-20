@@ -4,7 +4,7 @@ import { Text } from 'react-native-paper';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 
 export default function ClientWorkoutScreen({ route, navigation }) {
-  const { exercises, day, program } = route.params;
+  const { program, currentDay, currentDate } = route.params || {};
   const [currentIdx, setCurrentIdx] = useState(0);
   const current = exercises[currentIdx];
 
