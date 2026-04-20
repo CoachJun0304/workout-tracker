@@ -26,7 +26,6 @@ import LogWorkoutScreen from './src/screens/coach/LogWorkoutScreen';
 import ProgressScreen from './src/screens/shared/ProgressScreen';
 import RecordsScreen from './src/screens/shared/RecordsScreen';
 import CoachHealthScreen from './src/screens/coach/CoachHealthScreen';
-import ApproveCoachesScreen from './src/screens/coach/ApproveCoachesScreen';
 
 // Client
 import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
