@@ -10,17 +10,17 @@ const GENDERS = ['Male','Female','Other'];
 
 export default function ClientDetailScreen({ route, navigation }) {
   const { client } = route.params || {};
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    name: client.name || '',
-    contact: client.contact || '',
-    age: client.age ? String(client.age) : '',
-    gender: client.gender || 'Male',
-    weight_kg: client.weight_kg ? String(client.weight_kg) : '',
-    height_cm: client.height_cm ? String(client.height_cm) : '',
-    goal: client.goal || '',
-    preferred_split: client.preferred_split || '',
-  });
+const [editing, setEditing] = useState(false);
+const [form, setForm] = useState({
+  name: client?.name || '',
+  contact: client?.contact || '',
+  age: client?.age ? String(client.age) : '',
+  gender: client?.gender || 'Male',
+  weight_kg: client?.weight_kg ? String(client.weight_kg) : '',
+  height_cm: client?.height_cm ? String(client.height_cm) : '',
+  goal: client?.goal || '',
+  preferred_split: client?.preferred_split || '',
+});
   const [loading, setLoading] = useState(false);
 
   function update(field, value) { setForm(f => ({ ...f, [field]: value })); }
