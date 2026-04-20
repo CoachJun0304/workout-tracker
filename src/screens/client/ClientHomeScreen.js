@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
@@ -65,7 +66,7 @@ function confirmSignOut() {
       signOut();
     }
   } else {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+    showAlert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut }
     ]);
@@ -254,38 +255,6 @@ function confirmSignOut() {
           ))}
         </View>
       )}
-
-      {/* Quick actions */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.actionCard}
-            onPress={() => navigation.navigate('MyProgress')}>
-            <Text style={styles.actionEmoji}>📈</Text>
-            <Text style={styles.actionText}>Progress</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCard}
-            onPress={() => navigation.navigate('MyRecords')}>
-            <Text style={styles.actionEmoji}>🏆</Text>
-            <Text style={styles.actionText}>Records</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCard}
-            onPress={() => navigation.navigate('MyHealth')}>
-            <Text style={styles.actionEmoji}>🥗</Text>
-            <Text style={styles.actionText}>Health</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionCard}
-            onPress={() => navigation.navigate('MyProfile')}>
-            <Text style={styles.actionEmoji}>👤</Text>
-            <Text style={styles.actionText}>Profile</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={{ height: 32 }} />
-    </ScrollView>
-  );
-}
 
 const styles = StyleSheet.create({
   container: { flex:1, backgroundColor: COLORS.darkBg },

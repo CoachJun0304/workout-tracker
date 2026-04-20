@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
@@ -79,10 +80,10 @@ export default function ClientProfileScreen() {
       contact: form.contact.trim(),
     }).eq(idField, idValue);
     setLoading(false);
-    if (error) { Alert.alert('Error', error.message); return; }
+    if (error) { showAlert('Error', error.message); return; }
     await refreshProfile();
     setEditing(false);
-    Alert.alert('✅ Profile Updated!');
+    showAlert('✅ Profile Updated!');
   }
 
   async function logWater(ml) {
@@ -112,7 +113,7 @@ export default function ClientProfileScreen() {
     setShowMeasureModal(false);
     setMeasureForm({ waist_cm:'', hips_cm:'', chest_cm:'', left_arm_cm:'', right_arm_cm:'', notes:'' });
     fetchMeasurements();
-    Alert.alert('✅ Measurements saved!');
+    showAlert('✅ Measurements saved!');
   }
 
   function confirmSignOut() {
@@ -121,7 +122,7 @@ export default function ClientProfileScreen() {
       signOut();
     }
   } else {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+    showAlert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut }
     ]);

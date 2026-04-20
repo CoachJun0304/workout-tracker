@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Alert, TouchableOpacity } from 'react-native';
 import { TextInput, Text } from 'react-native-paper';
@@ -21,7 +22,7 @@ export default function AddClientScreen({ navigation }) {
 
   async function handleSave() {
     if (!form.name.trim()) {
-      Alert.alert('Error', 'Client name is required');
+      showAlert('Error', 'Client name is required');
       return;
     }
     setLoading(true);
@@ -45,15 +46,15 @@ export default function AddClientScreen({ navigation }) {
         .single();
 
       if (error) {
-        Alert.alert('Error', error.message);
+        showAlert('Error', error.message);
       } else {
-        Alert.alert('✅ Client Added!',
+        showAlert('✅ Client Added!',
           `${form.name} has been added successfully.`, [
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);
       }
     } catch (e) {
-      Alert.alert('Error', e.message);
+      showAlert('Error', e.message);
     }
     setLoading(false);
   }

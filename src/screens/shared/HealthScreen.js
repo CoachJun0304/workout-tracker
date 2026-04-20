@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,

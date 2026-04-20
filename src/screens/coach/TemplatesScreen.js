@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -20,7 +21,7 @@ export default function TemplatesScreen({ navigation }) {
   }
 
   async function deleteTemplate(tpl) {
-    Alert.alert('Delete Template',
+    showAlert('Delete Template',
       `Delete "${tpl.name}"? This will NOT remove it from already-assigned client programs.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
@@ -56,7 +57,7 @@ export default function TemplatesScreen({ navigation }) {
     }
 
     setLoading(false);
-    Alert.alert('✅ Duplicated!', `"${tpl.name} (Copy)" has been created.`);
+    showAlert('✅ Duplicated!', `"${tpl.name} (Copy)" has been created.`);
     fetchTemplates();
   }
 
@@ -84,7 +85,7 @@ export default function TemplatesScreen({ navigation }) {
         <View key={tpl.id} style={styles.tplCard}>
           <TouchableOpacity
             onPress={() => setExpandedId(expandedId === tpl.id ? null : tpl.id)}
-            onLongPress={() => Alert.alert(tpl.name, 'Choose an action', [
+            onLongPress={() => showAlert(tpl.name, 'Choose an action', [
               { text: 'Cancel', style: 'cancel' },
               { text: '📋 Duplicate', onPress: () => duplicateTemplate(tpl) },
               { text: '🗑️ Delete', style: 'destructive', onPress: () => deleteTemplate(tpl) },

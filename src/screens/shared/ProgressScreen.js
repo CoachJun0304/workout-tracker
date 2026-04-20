@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
@@ -117,13 +118,13 @@ export default function ProgressScreen({ route }) {
       reps: parseInt(editForm.reps) || editingLog.reps,
     }).eq('id', editingLog.id);
     setLoading(false);
-    if (error) { Alert.alert('Error', error.message); return; }
+    if (error) { showAlert('Error', error.message); return; }
     setShowEditModal(false);
     fetchLogs();
   }
 
   async function handleDeleteLog(id) {
-    Alert.alert('Delete Entry', 'Remove this log entry?', [
+    showAlert('Delete Entry', 'Remove this log entry?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         await supabase.from('workout_logs').delete().eq('id', id);

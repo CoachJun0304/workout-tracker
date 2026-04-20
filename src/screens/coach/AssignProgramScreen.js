@@ -1,3 +1,4 @@
+import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
@@ -63,7 +64,7 @@ export default function AssignProgramScreen({ route, navigation }) {
   }
 
   function saveExForm() {
-    if (!exForm.exercise_name.trim()) { Alert.alert('Error', 'Exercise name required'); return; }
+    if (!exForm.exercise_name.trim()) { showAlert('Error', 'Exercise name required'); return; }
     const newEx = {
       day: exForm.day,
       exercise_name: exForm.exercise_name.trim(),
@@ -91,7 +92,7 @@ export default function AssignProgramScreen({ route, navigation }) {
   }
 
   function removeExercise(idx) {
-    Alert.alert('Remove', 'Remove this exercise?', [
+    showAlert('Remove', 'Remove this exercise?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: () =>
         setExercises(e => e.filter((_, i) => i !== idx))
@@ -116,17 +117,17 @@ export default function AssignProgramScreen({ route, navigation }) {
         muscle_group: muscle_group||'Other',
       });
     });
-    if (errors.length) Alert.alert('Errors', errors.slice(0,5).join('\n'));
+    if (errors.length) showAlert('Errors', errors.slice(0,5).join('\n'));
     if (parsed.length) {
       setExercises(e => [...e, ...parsed]);
       setBulkText('');
-      Alert.alert('✅ Parsed!', `${parsed.length} exercises added.`);
+      showAlert('✅ Parsed!', `${parsed.length} exercises added.`);
     }
   }
 
   async function saveCustomTemplate() {
-    if (!customName.trim()) { Alert.alert('Error', 'Template name required'); return; }
-    if (!exercises.length) { Alert.alert('Error', 'Add at least one exercise'); return; }
+    if (!customName.trim()) { showAlert('Error', 'Template name required'); return; }
+    if (!exercises.length) { showAlert('Error', 'Add at least one exercise'); return; }
     setLoading(true);
 
     const { data: tpl, error } = await supabase.from('workout_templates').insert({
@@ -136,7 +137,7 @@ export default function AssignProgramScreen({ route, navigation }) {
       is_preset: false,
     }).select().single();
 
-    if (error) { Alert.alert('Error', error.message); setLoading(false); return; }
+    if (error) { showAlert('Error', error.message); setLoading(false); return; }
 
     await supabase.from('template_exercises').insert(
       exercises.map((ex, i) => ({ template_id: tpl.id, ...ex, order_index: i }))
@@ -144,7 +145,7 @@ export default function AssignProgramScreen({ route, navigation }) {
 
     await fetchTemplates();
     setLoading(false);
-    Alert.alert('✅ Saved!', `"${customName}" saved. Select it from the Saved tab to assign.`);
+    showAlert('✅ Saved!', `"${customName}" saved. Select it from the Saved tab to assign.`);
     setCustomName('');
     setExercises([]);
     setTab('saved');
@@ -157,7 +158,7 @@ export default function AssignProgramScreen({ route, navigation }) {
       .eq('month', selectedMonth).eq('is_active', true);
 
     if (existing?.length > 0) {
-      Alert.alert('Program Exists',
+      showAlert('Program Exists',
         `${client.name} already has a program for ${selectedMonth}.`, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Add to existing', onPress: () => doAssign(templateId, templateName, false) },
@@ -184,8 +185,8 @@ export default function AssignProgramScreen({ route, navigation }) {
     });
 
     setLoading(false);
-    if (error) { Alert.alert('Error', error.message); return; }
-    Alert.alert('✅ Assigned!',
+    if (error) { showAlert('Error', error.message); return; }
+    showAlert('✅ Assigned!',
       `"${templateName}" assigned to ${client.name} for ${selectedMonth}.`, [
       { text: 'Done', onPress: () => navigation.goBack() }
     ]);
