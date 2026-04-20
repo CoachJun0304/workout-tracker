@@ -1,3 +1,4 @@
+import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert, Platform } from 'react-native';
 import React, { useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -50,12 +51,18 @@ export default function DashboardScreen({ navigation }) {
     setRefreshing(false);
   }
 
-  function confirmSignOut() {
+ function confirmSignOut() {
+  if (Platform.OS === 'web') {
+    if (window.confirm('Are you sure you want to sign out?')) {
+      signOut();
+    }
+  } else {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut }
     ]);
   }
+}
 
   const greeting = () => {
     const h = new Date().getHours();

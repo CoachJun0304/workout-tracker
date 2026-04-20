@@ -1,3 +1,4 @@
+import { View, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert, Platform } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
@@ -116,11 +117,17 @@ export default function ClientProfileScreen() {
   }
 
   function confirmSignOut() {
+  if (Platform.OS === 'web') {
+    if (window.confirm('Are you sure you want to sign out?')) {
+      signOut();
+    }
+  } else {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut }
     ]);
   }
+}
 
   const InfoRow = ({ label, value }) => (
     <View style={styles.infoRow}>
