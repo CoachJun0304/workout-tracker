@@ -495,87 +495,115 @@ export default function CoachHealthScreen({ route }) {
 
         {/* ── CYCLE (female only) ── */}
         {tab === 'cycle' && isFemale && (
-          <View>
-            {currentCycle ? (
-              <View>
-                <View style={styles.cycleInfoCard}>
-                  <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
-                  <Text style={styles.cycleInfoText}>
-                    Last period: {currentCycle.cycle_start_date}
-                  </Text>
-                  <Text style={styles.cycleInfoText}>
-                    Cycle length: {currentCycle.cycle_length} days · Period: {currentCycle.period_length} days
-                  </Text>
-                </View>
+  <View>
+    {currentCycle ? (
+      <View>
+        <View style={styles.cycleInfoCard}>
+          <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
+          <Text style={styles.cycleInfoText}>
+            Last period: {currentCycle.cycle_start_date}
+          </Text>
+          <Text style={styles.cycleInfoText}>
+            Cycle: {currentCycle.cycle_length} days · Period: {currentCycle.period_length} days
+          </Text>
+        </View>
 
-                {/* Phase legend */}
-                <View style={styles.phaseLegendRow}>
-                  {Object.values(CYCLE_PHASES).map(ph => (
-                    <View key={ph.name} style={styles.phaseLegendItem}>
-                      <View style={[styles.legendDot, { backgroundColor:ph.color }]} />
-                      <Text style={styles.legendText}>{ph.emoji} {ph.name.split(' ')[0]}</Text>
-                    </View>
-                  ))}
-                </View>
+        {/* Phase legend */}
+        <View style={styles.phaseLegendRow}>
+          {Object.values(CYCLE_PHASES).map(ph => (
+            <View key={ph.name} style={styles.phaseLegendItem}>
+              <View style={[styles.legendDot, { backgroundColor: ph.color }]} />
+              <Text style={styles.legendText}>{ph.emoji} {ph.name.split(' ')[0]}</Text>
+            </View>
+          ))}
+        </View>
 
-                {/* Cycle calendar */}
-                <View style={styles.calendarCard}>
-                  <View style={styles.calNav}>
-                    <TouchableOpacity onPress={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1))}>
-                      <Text style={styles.calNavBtn}>‹</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.calMonthText}>{monthName}</Text>
-                    <TouchableOpacity onPress={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1))}>
-                      <Text style={styles.calNavBtn}>›</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.calDayHeaders}>
-                    {DAYS_OF_WEEK.map(d => <Text key={d} style={styles.calDayHeader}>{d}</Text>)}
-                  </View>
-                  <View style={styles.calGrid}>
-                    {calendarCells.map((cell, i) => {
-                      if (!cell) return <View key={`e${i}`} style={styles.calCell} />;
-                      const phase = getPhaseForDate(cell.date, currentCycle.cycle_start_date, currentCycle.cycle_length);
-                      const isToday = cell.date === todayStr;
-                      return (
-                        <View key={cell.date} style={styles.calCell}>
-                          <View style={[styles.calCellInner, {
-                            backgroundColor: phase ? phase.color+'30' : 'transparent',
-                            borderColor: isToday ? COLORS.roseGold : phase ? phase.color : COLORS.darkBorder,
-                            borderWidth: isToday ? 2 : 1,
-                          }]}>
-                            <Text style={[styles.calCellDay, { color:isToday?COLORS.roseGold:COLORS.white }]}>
-                              {cell.day}
-                            </Text>
-                            {phase && <Text style={{ fontSize:7 }}>{phase.emoji}</Text>}
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                {/* Phase recommendations for coach */}
-                {Object.values(CYCLE_PHASES).map(phase => (
-                  <View key={phase.name} style={[styles.phaseCard, { borderColor: phase.color }]}>
-                    <Text style={[styles.phaseTitle, { color: phase.color }]}>
-                      {phase.emoji} {phase.name} (Days {phase.days})
-                    </Text>
-                    <Text style={styles.phaseWeightNote}>⚖️ {phase.weightNote}</Text>
-                    <Text style={styles.phaseRec}>
-                      💪 {phase.workoutRecommendations[0]}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No cycle data logged</Text>
-                <Text style={styles.emptySub}>Client needs to log their period in their Health tab</Text>
-              </View>
-            )}
+        {/* Small cycle calendar */}
+        <View style={styles.smallCalendarCard}>
+          <View style={styles.calNav}>
+            <TouchableOpacity
+              onPress={() => setCalendarMonth(m =>
+                new Date(m.getFullYear(), m.getMonth() - 1))}>
+              <Text style={styles.calNavBtn}>‹</Text>
+            </TouchableOpacity>
+            <Text style={styles.calMonthText}>{monthName}</Text>
+            <TouchableOpacity
+              onPress={() => setCalendarMonth(m =>
+                new Date(m.getFullYear(), m.getMonth() + 1))}>
+              <Text style={styles.calNavBtn}>›</Text>
+            </TouchableOpacity>
           </View>
-        )}
+          <View style={styles.calDayHeaders}>
+            {DAYS_OF_WEEK.map(d => (
+              <Text key={d} style={styles.calDayHeader}>{d}</Text>
+            ))}
+          </View>
+          <View style={styles.calGrid}>
+            {calendarCells.map((cell, i) => {
+              if (!cell) return <View key={`e${i}`} style={styles.smallCalCell} />;
+              const phase = getPhaseForDate(
+                cell.date,
+                currentCycle.cycle_start_date,
+                currentCycle.cycle_length
+              );
+              const isToday = cell.date === todayStr;
+              return (
+                <TouchableOpacity key={cell.date} style={styles.smallCalCell}
+                  onPress={() => {
+                    if (phase) {
+                      showAlert(
+                        `${phase.emoji} ${phase.name}`,
+                        `Day ${cell.day}\n\n💪 ${phase.workoutRecommendations[0]}\n\n🥗 ${phase.nutritionTips[0]}\n\n⚖️ ${phase.weightNote}`
+                      );
+                    }
+                  }}>
+                  <View style={[styles.smallCalCellInner, {
+                    backgroundColor: phase ? phase.color + '40' : 'transparent',
+                    borderColor: isToday ? COLORS.roseGold : phase ? phase.color : COLORS.darkBorder,
+                    borderWidth: isToday ? 2 : 1,
+                  }]}>
+                    <Text style={[styles.smallCalCellDay, {
+                      color: isToday ? COLORS.roseGold : COLORS.white
+                    }]}>
+                      {cell.day}
+                    </Text>
+                    {phase && (
+                      <Text style={{ fontSize: 6 }}>{phase.emoji}</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Phase cards */}
+        {Object.values(CYCLE_PHASES).map(phase => (
+          <View key={phase.name}
+            style={[styles.phaseCard, { borderColor: phase.color }]}>
+            <Text style={[styles.phaseTitle, { color: phase.color }]}>
+              {phase.emoji} {phase.name} (Days {phase.days})
+            </Text>
+            <Text style={styles.phaseWeightNote}>⚖️ {phase.weightNote}</Text>
+            <Text style={styles.phaseRec}>
+              💪 {phase.workoutRecommendations[0]}
+            </Text>
+            <Text style={styles.phaseRec}>
+              🥗 {phase.nutritionTips[0]}
+            </Text>
+          </View>
+        ))}
+      </View>
+    ) : (
+      <View style={styles.emptyCard}>
+        <Text style={styles.emptyText}>No cycle data logged</Text>
+        <Text style={styles.emptySub}>
+          Client needs to log their period in their Health tab
+        </Text>
+      </View>
+    )}
+  </View>
+)}
 
       </ScrollView>
 
@@ -740,15 +768,35 @@ const styles = StyleSheet.create({
   macroPillLabel: { fontSize:9, color: COLORS.textMuted, marginTop:2 },
   noTargetsCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding:14, marginBottom:12, alignItems:'center' },
   noTargetsText: { color: COLORS.textSecondary, ...FONTS.semibold },
-  calendarCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding:14, marginBottom:12, borderWidth:1, borderColor: COLORS.darkBorder },
+  calendarCard: {
+  backgroundColor: COLORS.darkCard,
+  borderRadius: RADIUS.lg,
+  padding: 14,
+  marginBottom: 12,
+  borderWidth: 1,
+  borderColor: COLORS.darkBorder,
+  maxWidth: 400,
+  alignSelf: 'center',
+  width: '100%',
+},
   calNav: { flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:12 },
   calNavBtn: { color: COLORS.roseGold, fontSize:24, ...FONTS.bold, paddingHorizontal:8 },
   calMonthText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   calDayHeaders: { flexDirection:'row', marginBottom:6 },
   calDayHeader: { flex:1, textAlign:'center', color: COLORS.textMuted, fontSize:10, ...FONTS.semibold },
   calGrid: { flexDirection:'row', flexWrap:'wrap' },
-  calCell: { width:`${100/7}%`, aspectRatio:1, padding:2 },
-  calCellInner: { flex:1, borderRadius:6, justifyContent:'center', alignItems:'center' },
+  calCell: {
+  width: `${100/7}%`,
+  aspectRatio: 1,
+  padding: 1,
+},
+  calCellInner: {
+  flex: 1,
+  borderRadius: 4,
+  justifyContent: 'center',
+  alignItems: 'center',
+  overflow: 'hidden',
+},
   calCellDay: { fontSize:11, ...FONTS.medium },
   calDot: { width:4, height:4, borderRadius:2, marginTop:1 },
   legendRow: { flexDirection:'row', gap:10, marginBottom:12, flexWrap:'wrap' },
@@ -797,4 +845,30 @@ const styles = StyleSheet.create({
   modalCancelText: { color: COLORS.textSecondary, ...FONTS.semibold },
   modalSaveBtn: { flex:2, paddingVertical:14, borderRadius: RADIUS.full, backgroundColor: COLORS.roseGold, alignItems:'center' },
   modalSaveText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  smallCalendarCard: {
+  backgroundColor: COLORS.darkCard,
+  borderRadius: RADIUS.lg,
+  padding: 10,
+  marginBottom: 12,
+  borderWidth: 1,
+  borderColor: COLORS.darkBorder,
+  maxWidth: 400,
+  alignSelf: 'center',
+  width: '100%',
+},
+smallCalCell: {
+  width: `${100/7}%`,
+  aspectRatio: 1,
+  padding: 1,
+},
+smallCalCellInner: {
+  flex: 1,
+  borderRadius: 4,
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+smallCalCellDay: {
+  fontSize: 9,
+  ...FONTS.medium,
+},
 });

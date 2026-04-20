@@ -1,11 +1,11 @@
-import { showAlert, showConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 import { toDisplay, unitLabel, estimated1RM } from '../../utils/unitUtils';
+import { showConfirm } from '../../utils/webAlert';
 
 const MUSCLE_ORDER = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
@@ -23,6 +23,7 @@ export default function RecordsScreen({ route }) {
   const clientId = clientParam?.id || profile?.id;
   const ul = unitLabel(unit);
   const [records, setRecords] = useState({});
+  const [allLogs, setAllLogs] = useState([]);
   const [totalPRs, setTotalPRs] = useState(0);
 
   useEffect(() => { fetchRecords(); }, [clientId]);
@@ -36,16 +37,16 @@ export default function RecordsScreen({ route }) {
       .order('weight_kg', { ascending: false });
 
     if (data) {
-      // Auto-compute PRs per exercise
+      setAllLogs(data);
       const prs = {};
       data.forEach(log => {
         if (!log.weight_kg) return;
-        if (!prs[log.exercise_name] || log.weight_kg > prs[log.exercise_name].weight_kg) {
+        if (!prs[log.exercise_name] ||
+            log.weight_kg > prs[log.exercise_name].weight_kg) {
           prs[log.exercise_name] = log;
         }
       });
 
-      // Group by muscle
       const grouped = {};
       Object.values(prs).forEach(pr => {
         const muscle = pr.muscle_group || 'Other';
@@ -53,14 +54,25 @@ export default function RecordsScreen({ route }) {
         grouped[muscle].push(pr);
       });
 
-      // Sort within each group by weight desc
       Object.keys(grouped).forEach(m =>
-        grouped[m].sort((a,b) => b.weight_kg - a.weight_kg)
+        grouped[m].sort((a, b) => b.weight_kg - a.weight_kg)
       );
 
       setRecords(grouped);
       setTotalPRs(Object.values(prs).length);
     }
+  }
+
+  async function deletePR(log) {
+    showConfirm(
+      'Remove PR',
+      `Remove the PR for ${log.exercise_name} (${toDisplay(log.weight_kg, unit)}${ul} × ${log.reps})?`,
+      async () => {
+        await supabase.from('workout_logs').delete().eq('id', log.id);
+        fetchRecords();
+      },
+      null, 'Remove', true
+    );
   }
 
   const orderedMuscles = [
@@ -97,11 +109,11 @@ export default function RecordsScreen({ route }) {
               return (
                 <View key={i} style={styles.prCard}>
                   <View style={styles.prRow}>
-                    <View style={{ flex:1 }}>
+                    <View style={{ flex: 1 }}>
                       <Text style={styles.prExercise}>{pr.exercise_name}</Text>
                       <Text style={styles.prDate}>
                         {new Date(pr.logged_at).toLocaleDateString('en-US',
-                          { month:'short', day:'numeric', year:'numeric' })}
+                          { month: 'short', day: 'numeric', year: 'numeric' })}
                       </Text>
                     </View>
                     <View style={styles.prStats}>
@@ -115,6 +127,11 @@ export default function RecordsScreen({ route }) {
                         </Text>
                       )}
                     </View>
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => deletePR(pr)}>
+                      <Text style={styles.deleteBtnText}>🗑️</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -127,22 +144,24 @@ export default function RecordsScreen({ route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex:1, backgroundColor: COLORS.darkBg },
-  content: { padding:16, paddingBottom:40, paddingTop:20 },
-  title: { fontSize: SIZES.xxxl, ...FONTS.heavy, color: COLORS.white, marginBottom:4 },
-  subtitle: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom:20 },
-  muscleHeader: { borderLeftWidth:3, paddingLeft:12, marginTop:16, marginBottom:8 },
-  muscleTitle: { fontSize: SIZES.sm, ...FONTS.bold, letterSpacing:1 },
-  prCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding:14, marginBottom:6, borderWidth:1, borderColor: COLORS.darkBorder },
-  prRow: { flexDirection:'row', alignItems:'center' },
+  container: { flex: 1, backgroundColor: COLORS.darkBg },
+  content: { padding: 16, paddingBottom: 40, paddingTop: 20, maxWidth: 800, alignSelf: 'center', width: '100%' },
+  title: { fontSize: SIZES.xxxl, ...FONTS.heavy, color: COLORS.white, marginBottom: 4 },
+  subtitle: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 20 },
+  muscleHeader: { borderLeftWidth: 3, paddingLeft: 12, marginTop: 16, marginBottom: 8 },
+  muscleTitle: { fontSize: SIZES.sm, ...FONTS.bold, letterSpacing: 1 },
+  prCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
+  prRow: { flexDirection: 'row', alignItems: 'center' },
   prExercise: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.md },
-  prDate: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop:2 },
-  prStats: { alignItems:'flex-end' },
+  prDate: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  prStats: { alignItems: 'flex-end', marginRight: 8 },
   prWeight: { color: COLORS.roseGold, fontSize: SIZES.xl, ...FONTS.bold },
   prReps: { color: COLORS.textMuted, fontSize: SIZES.sm },
-  prE1rm: { color: '#4ECDC4', fontSize: SIZES.xs, marginTop:2 },
-  empty: { alignItems:'center', paddingVertical:60 },
-  emptyEmoji: { fontSize:64, marginBottom:16 },
+  prE1rm: { color: '#4ECDC4', fontSize: SIZES.xs, marginTop: 2 },
+  deleteBtn: { padding: 8, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.md },
+  deleteBtnText: { fontSize: 16 },
+  empty: { alignItems: 'center', paddingVertical: 60 },
+  emptyEmoji: { fontSize: 64, marginBottom: 16 },
   emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xl },
-  emptySub: { color: COLORS.textMuted, fontSize: SIZES.md, marginTop:6 },
+  emptySub: { color: COLORS.textMuted, fontSize: SIZES.md, marginTop: 6 },
 });
