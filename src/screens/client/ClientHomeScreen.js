@@ -256,6 +256,11 @@ function confirmSignOut() {
         </View>
       )}
 
+      <View style={{ height: 32 }} />
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex:1, backgroundColor: COLORS.darkBg },
   header: { flexDirection:'row', justifyContent:'space-between', alignItems:'center', padding:20, paddingTop:60 },
