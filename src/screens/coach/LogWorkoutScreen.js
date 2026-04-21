@@ -42,21 +42,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
       </View>
     );
   }
-  const [selectedDay, setSelectedDay] = useState(
-    DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
-  );
-  const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
-  const [selectedWeek, setSelectedWeek] = useState('1');
-  const [sessionNote, setSessionNote] = useState('');
-  const [sets, setSets] = useState([
-    { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
-  ]);
-  const [loading, setLoading] = useState(false);
-  const [showAddEx, setShowAddEx] = useState(false);
-  const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
-  const [program, setProgram] = useState(null);
 
-  useEffect(() => { fetchClientProgram(); }, []);
 
   async function fetchClientProgram() {
     const { data } = await supabase
