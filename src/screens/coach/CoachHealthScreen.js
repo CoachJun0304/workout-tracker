@@ -13,7 +13,7 @@ import { getPhaseForDate, CYCLE_PHASES } from '../../data/cycleData';
 const W = Dimensions.get('window').width;
 const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-export default function LogWorkoutScreen({ route, navigation }) {
+export default function CoachHealthScreen({ route, navigation }) {
   const { client } = route.params || {};
   const [tab, setTab] = useState('weight');
   const [weightLogs, setWeightLogs] = useState([]);
