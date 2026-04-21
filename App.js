@@ -61,8 +61,6 @@ const stackOptions = {
 function CoachClientsStack() {
   return (
     <Stack.Navigator screenOptions={stackOptions}>
-      <Stack.Screen name="ClientReport" component={ClientReportScreen}
-        options={{ title: 'Workout Report' }} />
       <Stack.Screen name="ClientsList" component={ClientsScreen}
         options={{ title: 'Clients' }} />
       <Stack.Screen name="ClientDetail" component={ClientDetailScreen}
@@ -79,6 +77,8 @@ function CoachClientsStack() {
         options={{ title: 'Personal Records' }} />
       <Stack.Screen name="CoachHealth" component={CoachHealthScreen}
         options={{ title: 'Health & Nutrition' }} />
+        <Stack.Screen name="ClientReport" component={ClientReportScreen}
+        options={{ title: 'Workout Report' }} />
     </Stack.Navigator>
   );
 }
