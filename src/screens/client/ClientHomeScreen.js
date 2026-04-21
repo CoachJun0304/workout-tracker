@@ -42,11 +42,19 @@ export default function ClientHomeScreen({ navigation }) {
 
     if (prog?.workout_templates?.template_exercises) {
       setProgram(prog);
-      const exs = prog.workout_templates.template_exercises
-        .sort((a, b) => a.order_index - b.order_index);
-      setAllExercises(exs);
-      setTodayExercises(exs.filter(e => e.day === today));
-    } else {
+      // Deduplicate by exercise_name + day
+  const seen = new Set();
+  const exs = prog.workout_templates.template_exercises
+    .sort((a, b) => a.order_index - b.order_index)
+    .filter(ex => {
+      const key = `${ex.day}-${ex.exercise_name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+      });
+  setAllExercises(exs);
+  setTodayExercises(exs.filter(e => e.day === today));
+}     else {
       setProgram(null);
       setAllExercises([]);
       setTodayExercises([]);

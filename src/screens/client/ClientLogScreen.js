@@ -212,63 +212,71 @@ export default function ClientLogScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            {/* Set headers */}
-            <View style={styles.setHeader}>
-              <Text style={[styles.setHeaderText, { flex: 0.5 }]}>Set</Text>
-              <Text style={[styles.setHeaderText, { flex: 2 }]}>Weight</Text>
-              <Text style={[styles.setHeaderText, { flex: 0.8 }]}>Unit</Text>
-              <Text style={[styles.setHeaderText, { flex: 1 }]}>Reps</Text>
-              <Text style={[styles.setHeaderText, { flex: 0.5 }]}>PR</Text>
-              <Text style={[styles.setHeaderText, { flex: 0.5 }]}>✕</Text>
-            </View>
+{ex.entries.map((entry, setIdx) => {
+  const e1rm = entry.weight && entry.reps
+    ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
+    : null;
+  return (
+    <View key={setIdx} style={styles.setCard}>
+      {/* Top row: Set number + PR toggle + Delete */}
+      <View style={styles.setCardHeader}>
+        <View style={styles.setNumBadge}>
+          <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
+        </View>
+        <View style={styles.setCardActions}>
+          <TouchableOpacity
+            style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+            onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+            <Text style={styles.prBtnText}>
+              {entry.is_pb ? '🏆 PR' : '○ PR'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.removeSetBtn}
+            onPress={() => removeSet(exIdx, setIdx)}>
+            <Text style={styles.removeSetBtnText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-            {ex.entries.map((entry, setIdx) => {
-              const e1rm = entry.weight && entry.reps
-                ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
-                : null;
-              return (
-                <View key={setIdx}>
-                  <View style={styles.setRow}>
-                    <Text style={[styles.setNum, { flex: 0.5 }]}>{setIdx + 1}</Text>
-                    <RNTextInput
-                      value={entry.weight}
-                      onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                      style={[styles.setInput, { flex: 2 }]}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textMuted}
-                      keyboardType="numeric" />
-                    <TouchableOpacity
-                      style={[styles.unitPicker, { flex: 0.8 }]}
-                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
-                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
-                      <Text style={styles.unitPickerText}>{entry.unit || 'kg'}</Text>
-                    </TouchableOpacity>
-                    <RNTextInput
-                      value={entry.reps}
-                      onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                      style={[styles.setInput, { flex: 1 }]}
-                      placeholder="0"
-                      placeholderTextColor={COLORS.textMuted}
-                      keyboardType="numeric" />
-                    <TouchableOpacity
-                      style={[styles.prBtn, entry.is_pb && styles.prBtnActive, { flex: 0.5 }]}
-                      onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-                      <Text style={{ fontSize: 14 }}>{entry.is_pb ? '🏆' : '○'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flex: 0.5, alignItems: 'center' }}
-                      onPress={() => removeSet(exIdx, setIdx)}>
-                      <Text style={{ color: COLORS.error, fontSize: 16 }}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {e1rm && (
-                    <Text style={styles.e1rmText}>
-                      est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
-                    </Text>
-                  )}
-                </View>
-              );
-            })}
+      {/* Bottom row: Weight + Unit + Reps */}
+      <View style={styles.setCardInputs}>
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputGroupLabel}>Weight</Text>
+          <RNTextInput
+            value={entry.weight}
+            onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+            style={styles.inputGroupField}
+            placeholder="0"
+            placeholderTextColor={COLORS.textMuted}
+            keyboardType="numeric" />
+        </View>
+        <TouchableOpacity
+          style={styles.unitToggle}
+          onPress={() => updateEntry(exIdx, setIdx, 'unit',
+            entry.unit === 'kg' ? 'lbs' : 'kg')}>
+          <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
+        </TouchableOpacity>
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputGroupLabel}>Reps</Text>
+          <RNTextInput
+            value={entry.reps}
+            onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+            style={styles.inputGroupField}
+            placeholder="0"
+            placeholderTextColor={COLORS.textMuted}
+            keyboardType="numeric" />
+        </View>
+      </View>
+
+      {e1rm && (
+        <Text style={styles.e1rmText}>
+          est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
+        </Text>
+      )}
+    </View>
+  );
+})}
 
             <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
               <Text style={styles.addSetBtnText}>+ Add Set</Text>
@@ -356,15 +364,22 @@ const styles = StyleSheet.create({
   exerciseName: { color: COLORS.white, fontSize: SIZES.lg, ...FONTS.bold },
   muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.sm, marginTop: 2 },
   removeExBtn: { padding: 8 },
-  setHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  setHeaderText: { color: COLORS.textMuted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
-  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 4 },
-  setNum: { color: COLORS.textMuted, textAlign: 'center', fontSize: SIZES.sm },
-  setInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 8, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', height: 38 },
-  unitPicker: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', height: 38, justifyContent: 'center' },
-  unitPickerText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
-  prBtn: { alignItems: 'center', justifyContent: 'center', height: 38 },
-  prBtnActive: { backgroundColor: COLORS.roseGoldMid, borderRadius: RADIUS.sm },
+  setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  setNumBadge: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  setNumBadgeText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  setCardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  prBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, borderWidth: 1, borderColor: COLORS.darkBorder },
+  prBtnActive: { backgroundColor: COLORS.roseGoldMid, borderColor: COLORS.roseGold },
+  prBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
+  removeSetBtn: { padding: 6, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.sm },
+  removeSetBtnText: { color: COLORS.error, fontSize: SIZES.sm },
+  setCardInputs: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  inputGroup: { flex: 1 },
+  inputGroupLabel: { color: COLORS.textMuted, fontSize: 10, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 },
+  inputGroupField: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 10, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 48 },
+  unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 48, minWidth: 52 },
+  unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.bold },
   e1rmText: { color: COLORS.textMuted, fontSize: 10, textAlign: 'right', marginBottom: 4 },
   addSetBtn: { marginTop: 8, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
   addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm },
