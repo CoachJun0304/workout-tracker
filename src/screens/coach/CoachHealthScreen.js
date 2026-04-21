@@ -1,3 +1,4 @@
+import { getPhaseForDate, CYCLE_PHASES } from '../../data/cycleData';
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput as RNTextInput } from 'react-native';
 import { Text } from 'react-native-paper';
@@ -24,6 +25,10 @@ export default function CoachHealthScreen({ route, navigation }) {
   const [targetInput, setTargetInput] = useState({ protein: '', carbs: '', fats: '' });
   const [feedbackText, setFeedbackText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [cycles, setCycles] = useState([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const isFemale = client?.gender === 'Female';
+  const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const clientUnit = client?.unit_preference || 'kg';
   const ul = unitLabel(clientUnit);
 
@@ -33,19 +38,22 @@ export default function CoachHealthScreen({ route, navigation }) {
 
   async function fetchAll() {
     try {
-      const [wRes, mRes, tRes, fRes] = await Promise.all([
-        supabase.from('weight_logs').select('*').eq('client_id', client.id)
-          .order('logged_at', { ascending: false }),
-        supabase.from('macro_logs').select('*').eq('client_id', client.id)
-          .order('date', { ascending: false }).limit(14),
-        supabase.from('macro_targets').select('*').eq('client_id', client.id).single(),
-        supabase.from('workout_feedback').select('*').eq('client_id', client.id)
-          .order('created_at', { ascending: false }),
+            const [wRes, mRes, tRes, fRes, cRes] = await Promise.all([
+              supabase.from('weight_logs').select('*').eq('client_id', client.id)
+                .order('logged_at', { ascending: false }),
+              supabase.from('macro_logs').select('*').eq('client_id', client.id)
+                .order('date', { ascending: false }).limit(14),
+              supabase.from('macro_targets').select('*').eq('client_id', client.id).single(),
+              supabase.from('workout_feedback').select('*').eq('client_id', client.id)
+                .order('created_at', { ascending: false }),
+              supabase.from('menstrual_cycles').select('*').eq('client_id', client.id)
+                .order('cycle_start_date', { ascending: false }),
       ]);
       setWeightLogs(wRes.data || []);
       setMacroLogs(mRes.data || []);
       setMacroTargets(tRes.data || null);
       setFeedbacks(fRes.data || []);
+      setCycles(cRes.data || []);
       if (tRes.data) {
         setTargetInput({
           protein: String(tRes.data.protein_g),
@@ -132,7 +140,7 @@ export default function CoachHealthScreen({ route, navigation }) {
     );
   }
 
-  const tabs = ['weight', 'macros', 'feedback'];
+  const tabs = ['weight', 'macros', 'feedback', 'cycle'];
 
   return (
     <View style={styles.container}>
@@ -149,7 +157,7 @@ export default function CoachHealthScreen({ route, navigation }) {
 
       {/* Tabs */}
       <View style={styles.tabRow}>
-        {['⚖️ Weight', '🥗 Macros', '💬 Feedback'].map((label, i) => (
+        {['⚖️ Weight', '🥗 Macros', '💬 Feedback', '🌸 Cycle'].map((label, i) => (
           <TouchableOpacity key={i}
             style={[styles.tabBtn, tab === tabs[i] && styles.tabBtnActive]}
             onPress={() => setTab(tabs[i])}>
@@ -389,7 +397,119 @@ export default function CoachHealthScreen({ route, navigation }) {
           </View>
         </View>
       </Modal>
+      
 
+      {/* CYCLE TAB */}
+{tab === 'cycle' && (
+  <View>
+    {!isFemale ? (
+      <View style={styles.empty}>
+        <Text style={styles.emptyText}>Not applicable</Text>
+        <Text style={{ color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 }}>
+          Cycle tracking is only available for female clients
+        </Text>
+      </View>
+    ) : cycles.length === 0 ? (
+      <View style={styles.empty}>
+        <Text style={styles.emptyText}>No cycle data</Text>
+        <Text style={{ color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 }}>
+          Client needs to log their period in their Health tab
+        </Text>
+      </View>
+    ) : (
+      <View>
+        {/* Cycle info */}
+        <View style={styles.cycleInfoCard}>
+          <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
+          <Text style={styles.cycleInfoText}>
+            Last period: {cycles[0].cycle_start_date}
+          </Text>
+          <Text style={styles.cycleInfoText}>
+            Cycle: {cycles[0].cycle_length} days · Period: {cycles[0].period_length} days
+          </Text>
+        </View>
+
+        {/* Phase legend */}
+        <View style={styles.phaseLegendRow}>
+          {Object.values(CYCLE_PHASES).map(ph => (
+            <View key={ph.name} style={styles.phaseLegendItem}>
+              <View style={[styles.legendDot, { backgroundColor: ph.color }]} />
+              <Text style={styles.legendText}>{ph.emoji} {ph.name.split(' ')[0]}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Calendar */}
+        <View style={styles.calendarCard}>
+          <View style={styles.calNav}>
+            <TouchableOpacity onPress={() => setCalendarMonth(m =>
+              new Date(m.getFullYear(), m.getMonth() - 1))}>
+              <Text style={styles.calNavBtn}>‹</Text>
+            </TouchableOpacity>
+            <Text style={styles.calMonthText}>
+              {calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+            </Text>
+            <TouchableOpacity onPress={() => setCalendarMonth(m =>
+              new Date(m.getFullYear(), m.getMonth() + 1))}>
+              <Text style={styles.calNavBtn}>›</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.calDayHeaders}>
+            {DAYS_OF_WEEK.map(d => (
+              <Text key={d} style={styles.calDayHeader}>{d}</Text>
+            ))}
+          </View>
+          <View style={styles.calGrid}>
+            {(() => {
+              const year = calendarMonth.getFullYear();
+              const month = calendarMonth.getMonth();
+              const firstDay = new Date(year, month, 1).getDay();
+              const daysInMonth = new Date(year, month + 1, 0).getDate();
+              const todayStr = new Date().toISOString().split('T')[0];
+              const cells = [];
+              for (let i = 0; i < firstDay; i++) cells.push(null);
+              for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const phase = getPhaseForDate(dateStr, cycles[0].cycle_start_date, cycles[0].cycle_length);
+                cells.push({ day: d, date: dateStr, phase });
+              }
+              return cells.map((cell, i) => {
+                if (!cell) return <View key={`e${i}`} style={styles.calCell} />;
+                const isToday = cell.date === todayStr;
+                return (
+                  <View key={cell.date} style={styles.calCell}>
+                    <View style={[styles.calCellInner, {
+                      backgroundColor: cell.phase ? cell.phase.color + '40' : 'transparent',
+                      borderColor: isToday ? COLORS.roseGold : cell.phase ? cell.phase.color : COLORS.darkBorder,
+                      borderWidth: isToday ? 2 : 1,
+                    }]}>
+                      <Text style={[styles.calCellDay, {
+                        color: isToday ? COLORS.roseGold : COLORS.white
+                      }]}>{cell.day}</Text>
+                      {cell.phase && <Text style={{ fontSize: 6 }}>{cell.phase.emoji}</Text>}
+                    </View>
+                  </View>
+                );
+              });
+            })()}
+          </View>
+        </View>
+
+        {/* Phase cards */}
+        {Object.values(CYCLE_PHASES).map(phase => (
+          <View key={phase.name} style={[styles.phaseCard, { borderColor: phase.color }]}>
+            <Text style={[styles.phaseTitle, { color: phase.color }]}>
+              {phase.emoji} {phase.name}
+            </Text>
+            <Text style={styles.phaseRec}>💪 {phase.workoutRecommendations[0]}</Text>
+            <Text style={styles.phaseRec}>🥗 {phase.nutritionTips[0]}</Text>
+            <Text style={styles.phaseRec}>⚖️ {phase.weightNote}</Text>
+          </View>
+        ))}
+      </View>
+    )}
+  </View>
+)}
     </View>
   );
 }
@@ -445,4 +565,24 @@ const styles = StyleSheet.create({
   modalCancelText: { color: COLORS.textSecondary, ...FONTS.semibold },
   modalSaveBtn: { flex: 2, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.roseGold, alignItems: 'center' },
   modalSaveText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  cycleInfoCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  cycleInfoTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 8 },
+  cycleInfoText: { color: COLORS.textSecondary, fontSize: SIZES.sm, marginBottom: 4 },
+  phaseLegendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  phaseLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  calendarCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder, maxWidth: 400, alignSelf: 'center', width: '100%' },
+  calNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  calNavBtn: { color: COLORS.roseGold, fontSize: 24, ...FONTS.bold, paddingHorizontal: 8 },
+  calMonthText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  calDayHeaders: { flexDirection: 'row', marginBottom: 6 },
+  calDayHeader: { flex: 1, textAlign: 'center', color: COLORS.textMuted, fontSize: 10, ...FONTS.semibold },
+  calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calCell: { width: `${100/7}%`, aspectRatio: 1, padding: 1 },
+  calCellInner: { flex: 1, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
+  calCellDay: { fontSize: 9, ...FONTS.medium },
+  phaseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderLeftWidth: 3 },
+  phaseTitle: { ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6 },
+  phaseRec: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 2 },
 });
