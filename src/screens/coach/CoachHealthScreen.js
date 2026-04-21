@@ -15,6 +15,7 @@ const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 export default function CoachHealthScreen({ route, navigation }) {
   const { client } = route.params || {};
+  const { profile } = useAuth();
   const [tab, setTab] = useState('weight');
   const [weightLogs, setWeightLogs] = useState([]);
   const [macroLogs, setMacroLogs] = useState([]);
@@ -34,10 +35,11 @@ export default function CoachHealthScreen({ route, navigation }) {
   const [feedbackText, setFeedbackText] = useState('');
   const [clientUnit, setClientUnit] = useState(client?.unit_preference || 'kg');
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { if (client?.id) fetchAll(); }, []);
 
   async function fetchAll() {
-    const [wRes, mRes, tRes, cRes, wlRes, fRes] = await Promise.all([
+  if (!client?.id) return;
+  const [wRes, mRes, tRes, cRes, wlRes, fRes] = await Promise.all([
       supabase.from('weight_logs').select('*').eq('client_id', client.id)
         .order('logged_at', { ascending: true }),
       supabase.from('macro_logs').select('*').eq('client_id', client.id)
