@@ -1,3 +1,4 @@
+import ClientReportScreen from './src/screens/coach/ClientReportScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -60,6 +61,8 @@ const stackOptions = {
 function CoachClientsStack() {
   return (
     <Stack.Navigator screenOptions={stackOptions}>
+      <Stack.Screen name="ClientReport" component={ClientReportScreen}
+        options={{ title: 'Workout Report' }} />
       <Stack.Screen name="ClientsList" component={ClientsScreen}
         options={{ title: 'Clients' }} />
       <Stack.Screen name="ClientDetail" component={ClientDetailScreen}

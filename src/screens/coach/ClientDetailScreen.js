@@ -187,6 +187,11 @@ export default function ClientDetailScreen({ route, navigation }) {
       <Text style={styles.sectionLabel}>Actions</Text>
       <View style={styles.actionsGrid}>
         <TouchableOpacity style={styles.actionBtn}
+        onPress={() => navigation.navigate('ClientReport', { client })}>
+        <Text style={styles.actionIcon}>📊</Text>
+        <Text style={styles.actionLabel}>Workout Report</Text>
+      </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn}
           onPress={() => navigation.navigate('LogWorkout', { client })}>
           <Text style={styles.actionIcon}>🏋️</Text>
           <Text style={styles.actionLabel}>Log Workout</Text>
