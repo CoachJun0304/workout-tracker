@@ -15,29 +15,6 @@ const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 export default function LogWorkoutScreen({ route, navigation }) {
   const { client } = route.params || {};
-  const { user, unit } = useAuth();
-  const [selectedDay, setSelectedDay] = useState(
-    DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
-  );
-  const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
-  const [selectedWeek, setSelectedWeek] = useState('1');
-  const [sessionNote, setSessionNote] = useState('');
-  const [sets, setSets] = useState([
-    { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
-  ]);
-  const [showAddEx, setShowAddEx] = useState(false);
-  const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
-  const [program, setProgram] = useState(null);
-
-  useEffect(() => { if (client) fetchClientProgram(); }, []);
-
-  if (!client) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#0D0D0D', justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: 'white' }}>No client selected. Go back and select a client.</Text>
-      </View>
-    );
-  }
   const [tab, setTab] = useState('weight');
   const [weightLogs, setWeightLogs] = useState([]);
   const [macroLogs, setMacroLogs] = useState([]);
