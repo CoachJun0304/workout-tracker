@@ -1,4 +1,3 @@
-import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -12,9 +11,6 @@ import { COLORS, FONTS, SIZES } from './src/theme';
 // Auth
 import LoginScreen from './src/screens/auth/LoginScreen';
 
-// Shared — Pending
-import PendingScreen from './src/screens/auth/PendingScreen';
-
 // Coach
 import DashboardScreen from './src/screens/coach/DashboardScreen';
 import ClientsScreen from './src/screens/coach/ClientsScreen';
@@ -23,9 +19,13 @@ import AddClientScreen from './src/screens/coach/AddClientScreen';
 import TemplatesScreen from './src/screens/coach/TemplatesScreen';
 import AssignProgramScreen from './src/screens/coach/AssignProgramScreen';
 import LogWorkoutScreen from './src/screens/coach/LogWorkoutScreen';
+import CoachHealthScreen from './src/screens/coach/CoachHealthScreen';
+
+// Shared
 import ProgressScreen from './src/screens/shared/ProgressScreen';
 import RecordsScreen from './src/screens/shared/RecordsScreen';
-import CoachHealthScreen from './src/screens/coach/CoachHealthScreen';
+import HealthScreen from './src/screens/shared/HealthScreen';
+import WorkoutRescheduleScreen from './src/screens/shared/WorkoutRescheduleScreen';
 
 // Client
 import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
@@ -33,7 +33,7 @@ import ClientWorkoutScreen from './src/screens/client/ClientWorkoutScreen';
 import ClientLogScreen from './src/screens/client/ClientLogScreen';
 import ClientProgressScreen from './src/screens/client/ClientProgressScreen';
 import ClientRecordsScreen from './src/screens/client/ClientRecordsScreen';
-import HealthScreen from './src/screens/shared/HealthScreen';
+import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -81,7 +81,6 @@ function CoachClientsStack() {
 }
 
 function CoachTabs() {
-  const { isHeadCoach } = useAuth();
   return (
     <Tab.Navigator screenOptions={{
       tabBarStyle: {
@@ -117,20 +116,11 @@ function CoachTabs() {
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>📋</Text>,
         }} />
-      {isHeadCoach && (
-        <Tab.Screen name="Approve" component={ApproveCoachesScreen}
-          options={{
-            title: 'Approvals',
-            tabBarLabel: 'Approvals',
-            tabBarIcon: ({ color }) =>
-              <Text style={{ fontSize: 20, color }}>✅</Text>,
-          }} />
-      )}
     </Tab.Navigator>
   );
 }
 
-// ── CLIENT STACK ─────────────────────────────────────────
+// ── CLIENT STACK ──────────────────────────────────────────
 function ClientStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -139,38 +129,13 @@ function ClientStack() {
         options={{ ...stackOptions, headerShown: true, title: "Today's Workout" }} />
       <Stack.Screen name="ClientLog" component={ClientLogScreen}
         options={{ ...stackOptions, headerShown: true, title: 'Log Workout' }} />
+      <Stack.Screen name="Reschedule" component={WorkoutRescheduleScreen}
+        options={{ ...stackOptions, headerShown: true, title: 'Workout Schedule' }} />
     </Stack.Navigator>
   );
 }
 
 function ClientTabs() {
-  function ClientTabs() {
-  return (
-    <Tab.Navigator screenOptions={{
-      tabBarStyle: { backgroundColor: COLORS.darkCard, borderTopColor: COLORS.darkBorder, height: 60, paddingBottom: 8 },
-      tabBarActiveTintColor: COLORS.roseGold,
-      tabBarInactiveTintColor: COLORS.textMuted,
-      tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-      headerShown: false,
-    }}>
-      <Tab.Screen name="Home" component={ClientStack}
-        options={{ tabBarLabel: 'Workouts',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏋️</Text> }} />
-      <Tab.Screen name="MyProgress" component={ClientProgressScreen}
-        options={{ tabBarLabel: 'Progress',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📈</Text> }} />
-      <Tab.Screen name="MyHealth" component={HealthScreen}
-        options={{ tabBarLabel: 'Health',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🥗</Text> }} />
-      <Tab.Screen name="MyRecords" component={ClientRecordsScreen}
-        options={{ tabBarLabel: 'Records',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🏆</Text> }} />
-      <Tab.Screen name="MyProfile" component={ClientProfileScreen}
-        options={{ tabBarLabel: 'Profile',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>👤</Text> }} />
-    </Tab.Navigator>
-  );
-}
   return (
     <Tab.Navigator screenOptions={{
       tabBarStyle: {
@@ -189,31 +154,37 @@ function ClientTabs() {
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>🏋️</Text>,
         }} />
-      <Tab.Screen name="Progress" component={ClientProgressScreen}
+      <Tab.Screen name="MyProgress" component={ProgressScreen}
         options={{
           tabBarLabel: 'Progress',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>📈</Text>,
         }} />
-      <Tab.Screen name="Health" component={HealthScreen}
+      <Tab.Screen name="MyHealth" component={HealthScreen}
         options={{
           tabBarLabel: 'Health',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>🥗</Text>,
         }} />
-      <Tab.Screen name="Records" component={ClientRecordsScreen}
+      <Tab.Screen name="MyRecords" component={RecordsScreen}
         options={{
           tabBarLabel: 'Records',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>🏆</Text>,
         }} />
+      <Tab.Screen name="MyProfile" component={ClientProfileScreen}
+        options={{
+          tabBarLabel: 'Profile',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>👤</Text>,
+        }} />
     </Tab.Navigator>
   );
 }
 
-// ── ROOT NAVIGATOR ───────────────────────────────────────
+// ── ROOT NAVIGATOR ──────────────────────────────────────────
 function AppNavigator() {
-  const { user, profile, loading, isCoach, isClient, isPending } = useAuth();
+  const { user, profile, loading, isCoach } = useAuth();
 
   if (loading) {
     return (
@@ -229,10 +200,6 @@ function AppNavigator() {
       {!user ? (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Login" component={LoginScreen} />
-        </Stack.Navigator>
-      ) : isPending ? (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Pending" component={PendingScreen} />
         </Stack.Navigator>
       ) : isCoach ? (
         <CoachTabs />
@@ -263,7 +230,4 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 12, fontSize: SIZES.md,
   },
-});import WorkoutRescheduleScreen from './src/screens/shared/WorkoutRescheduleScreen';
-
-// Inside ClientStack:
-<Stack.Screen name="Reschedule" component={WorkoutRescheduleScreen} options={{ title: 'Workout Schedule' }} />
+});
