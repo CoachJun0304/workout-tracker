@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
-import {
-  View, ScrollView, StyleSheet, TouchableOpacity, Platform
-} from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { Text, TextInput } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
@@ -53,7 +51,7 @@ export default function ClientDetailScreen({ route, navigation }) {
   async function handleDelete() {
     showConfirm(
       'Remove Client',
-      `Remove ${client.name} from your client list? They can still log in but won't appear in your dashboard.`,
+      `Remove ${client.name}? They can still log in but won't appear in your dashboard.`,
       async () => {
         await supabase.from('profiles').update({ status: 'inactive' }).eq('id', client.id);
         navigation.goBack();
@@ -69,7 +67,7 @@ export default function ClientDetailScreen({ route, navigation }) {
     </View>
   );
 
-  const ChipRow = ({ options, value, field }) => (
+  const ChipRow = ({ options, field }) => (
     <View style={styles.chipRow}>
       {options.map(opt => (
         <TouchableOpacity key={opt}
@@ -122,46 +120,27 @@ export default function ClientDetailScreen({ route, navigation }) {
       {editing ? (
         <View style={styles.editCard}>
           <Text style={styles.editTitle}>Edit Client Profile</Text>
-
-          <Text style={styles.fieldLabel}>Full Name</Text>
-          <TextInput value={form.name} onChangeText={v => update('name', v)}
-            style={styles.input} mode="outlined"
-            outlineColor={COLORS.darkBorder2} activeOutlineColor={COLORS.roseGold}
-            textColor={COLORS.white} />
-
-          <Text style={styles.fieldLabel}>Contact / Phone</Text>
-          <TextInput value={form.contact} onChangeText={v => update('contact', v)}
-            style={styles.input} mode="outlined"
-            outlineColor={COLORS.darkBorder2} activeOutlineColor={COLORS.roseGold}
-            textColor={COLORS.white} />
-
-          <Text style={styles.fieldLabel}>Age</Text>
-          <TextInput value={form.age} onChangeText={v => update('age', v)}
-            style={styles.input} mode="outlined" keyboardType="numeric"
-            outlineColor={COLORS.darkBorder2} activeOutlineColor={COLORS.roseGold}
-            textColor={COLORS.white} />
-
-          <Text style={styles.fieldLabel}>Weight (kg)</Text>
-          <TextInput value={form.weight_kg} onChangeText={v => update('weight_kg', v)}
-            style={styles.input} mode="outlined" keyboardType="numeric"
-            outlineColor={COLORS.darkBorder2} activeOutlineColor={COLORS.roseGold}
-            textColor={COLORS.white} />
-
-          <Text style={styles.fieldLabel}>Height (cm)</Text>
-          <TextInput value={form.height_cm} onChangeText={v => update('height_cm', v)}
-            style={styles.input} mode="outlined" keyboardType="numeric"
-            outlineColor={COLORS.darkBorder2} activeOutlineColor={COLORS.roseGold}
-            textColor={COLORS.white} />
-
+          {[
+            { label: 'Full Name', field: 'name', type: 'default' },
+            { label: 'Contact / Phone', field: 'contact', type: 'default' },
+            { label: 'Age', field: 'age', type: 'numeric' },
+            { label: 'Weight (kg)', field: 'weight_kg', type: 'numeric' },
+            { label: 'Height (cm)', field: 'height_cm', type: 'numeric' },
+          ].map(f => (
+            <View key={f.field}>
+              <Text style={styles.fieldLabel}>{f.label}</Text>
+              <TextInput value={form[f.field]} onChangeText={v => update(f.field, v)}
+                style={styles.input} mode="outlined" keyboardType={f.type}
+                outlineColor={COLORS.darkBorder} activeOutlineColor={COLORS.roseGold}
+                textColor={COLORS.white} />
+            </View>
+          ))}
           <Text style={styles.fieldLabel}>Gender</Text>
-          <ChipRow options={GENDERS} value={form.gender} field="gender" />
-
+          <ChipRow options={GENDERS} field="gender" />
           <Text style={styles.fieldLabel}>Goal</Text>
-          <ChipRow options={GOALS} value={form.goal} field="goal" />
-
+          <ChipRow options={GOALS} field="goal" />
           <Text style={styles.fieldLabel}>Preferred Split</Text>
-          <ChipRow options={SPLITS} value={form.preferred_split} field="preferred_split" />
-
+          <ChipRow options={SPLITS} field="preferred_split" />
           <TouchableOpacity
             style={[styles.saveBtn, loading && { opacity: 0.6 }]}
             onPress={handleSave} disabled={loading}>
@@ -183,25 +162,9 @@ export default function ClientDetailScreen({ route, navigation }) {
         </View>
       )}
 
-      {/* Action Buttons */}
+      {/* Actions */}
       <Text style={styles.sectionLabel}>Actions</Text>
       <View style={styles.actionsGrid}>
-                <TouchableOpacity style={styles.actionBtn}
-          onPress={() => navigation.navigate('WorkoutHistory', { client })}>
-          <Text style={styles.actionIcon}>📋</Text>
-          <Text style={styles.actionLabel}>Workout History</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn}
-        onPress={() => navigation.navigate('ClientReport', { client })}>
-        <Text style={styles.actionIcon}>📊</Text>
-        <Text style={styles.actionLabel}>Workout Report</Text>
-        
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.actionBtn}
-          onPress={() => navigation.navigate('WorkoutHistory', { client })}>
-          <Text style={styles.actionIcon}>📋</Text>
-          <Text style={styles.actionLabel}>Workout History</Text>
-        </TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn}
           onPress={() => navigation.navigate('LogWorkout', { client })}>
           <Text style={styles.actionIcon}>🏋️</Text>
@@ -211,6 +174,16 @@ export default function ClientDetailScreen({ route, navigation }) {
           onPress={() => navigation.navigate('AssignProgram', { client })}>
           <Text style={styles.actionIcon}>📋</Text>
           <Text style={styles.actionLabel}>Assign Program</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn}
+          onPress={() => navigation.navigate('WorkoutHistory', { client })}>
+          <Text style={styles.actionIcon}>📅</Text>
+          <Text style={styles.actionLabel}>Workout History</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn}
+          onPress={() => navigation.navigate('ClientReport', { client })}>
+          <Text style={styles.actionIcon}>📊</Text>
+          <Text style={styles.actionLabel}>Workout Report</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn}
           onPress={() => navigation.navigate('Progress', { client })}>

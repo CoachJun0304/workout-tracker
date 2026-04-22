@@ -24,9 +24,16 @@ export default function ClientLogScreen({ route, navigation }) {
   const [sets, setSets] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showAddEx, setShowAddEx] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
   const [selectedDay, setSelectedDay] = useState(
     day || DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
+  );
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [dateInput, setDateInput] = useState(
+    new Date().toISOString().split('T')[0]
   );
 
   useEffect(() => {
@@ -81,12 +88,24 @@ export default function ClientLogScreen({ route, navigation }) {
     setShowAddEx(false);
   }
 
+  function confirmDate() {
+    if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      setSelectedDate(dateInput);
+      const d = new Date(dateInput + 'T12:00:00');
+      const dayIdx = d.getDay();
+      setSelectedDay(DAYS[dayIdx === 0 ? 6 : dayIdx - 1]);
+    } else {
+      showAlert('Invalid Date', 'Please use YYYY-MM-DD format');
+      return;
+    }
+    setShowDatePicker(false);
+  }
+
   async function handleSave() {
     if (!profile?.id) {
       showAlert('Error', 'Not logged in. Please sign in again.');
       return;
     }
-
     const rows = [];
     for (const ex of sets) {
       const { data: prData } = await supabase
@@ -113,6 +132,7 @@ export default function ClientLogScreen({ route, navigation }) {
           weight_kg: weightKg,
           reps: entry.reps ? parseInt(entry.reps) : null,
           is_personal_best: isPR,
+          logged_at: new Date(selectedDate + 'T12:00:00').toISOString(),
         });
       });
     }
@@ -121,13 +141,12 @@ export default function ClientLogScreen({ route, navigation }) {
       showAlert('No data', 'Enter at least one set with weight or reps.');
       return;
     }
-
     setLoading(true);
 
     if (sessionNote.trim()) {
       await supabase.from('session_notes').upsert({
         client_id: profile.id,
-        date: new Date().toISOString().split('T')[0],
+        date: selectedDate,
         note: sessionNote.trim(),
       }, { onConflict: 'client_id,date' });
     }
@@ -135,15 +154,12 @@ export default function ClientLogScreen({ route, navigation }) {
     const { error } = await supabase.from('workout_logs').insert(rows);
     setLoading(false);
 
-    if (error) {
-      showAlert('Error saving workout', error.message);
-      return;
-    }
+    if (error) { showAlert('Error saving workout', error.message); return; }
 
     const prs = rows.filter(r => r.is_personal_best).length;
     showAlert(
       '✅ Workout Saved!',
-      `${rows.length} sets logged!${prs > 0 ? `\n🏆 ${prs} new Personal Record${prs > 1 ? 's' : ''}!` : ''}`,
+      `${rows.length} sets logged for ${selectedDate}!${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}`,
       [{ text: 'Done', onPress: () => navigation.navigate('ClientHome') }]
     );
   }
@@ -172,12 +188,18 @@ export default function ClientLogScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Banner */}
+        {/* Banner with date */}
         <View style={styles.dayBanner}>
-          <Text style={styles.dayText}>
-            {freeLog ? '📝 Free Workout Log' : `${selectedDay} — ${currentMonth}`}
-          </Text>
-          <Text style={styles.unitText}>Unit: {ul}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dayText}>
+              {freeLog ? '📝 Free Workout Log' : `${selectedDay} — ${currentMonth}`}
+            </Text>
+            <Text style={styles.dateSubText}>📅 {selectedDate}</Text>
+          </View>
+          <TouchableOpacity style={styles.changeDateBtn}
+            onPress={() => setShowDatePicker(true)}>
+            <Text style={styles.changeDateBtnText}>Change Date</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Session note */}
@@ -190,7 +212,6 @@ export default function ClientLogScreen({ route, navigation }) {
             multiline />
         </View>
 
-        {/* No exercises yet */}
         {sets.length === 0 && (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyText}>No exercises added yet</Text>
@@ -198,7 +219,6 @@ export default function ClientLogScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Exercises */}
         {sets.map((ex, exIdx) => (
           <View key={exIdx} style={styles.exerciseCard}>
             <View style={styles.exHeader}>
@@ -212,71 +232,65 @@ export default function ClientLogScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-{ex.entries.map((entry, setIdx) => {
-  const e1rm = entry.weight && entry.reps
-    ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
-    : null;
-  return (
-    <View key={setIdx} style={styles.setCard}>
-      {/* Top row: Set number + PR toggle + Delete */}
-      <View style={styles.setCardHeader}>
-        <View style={styles.setNumBadge}>
-          <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
-        </View>
-        <View style={styles.setCardActions}>
-          <TouchableOpacity
-            style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
-            onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-            <Text style={styles.prBtnText}>
-              {entry.is_pb ? '🏆 PR' : '○ PR'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.removeSetBtn}
-            onPress={() => removeSet(exIdx, setIdx)}>
-            <Text style={styles.removeSetBtnText}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Bottom row: Weight + Unit + Reps */}
-      <View style={styles.setCardInputs}>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputGroupLabel}>Weight</Text>
-          <RNTextInput
-            value={entry.weight}
-            onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-            style={styles.inputGroupField}
-            placeholder="0"
-            placeholderTextColor={COLORS.textMuted}
-            keyboardType="numeric" />
-        </View>
-        <TouchableOpacity
-          style={styles.unitToggle}
-          onPress={() => updateEntry(exIdx, setIdx, 'unit',
-            entry.unit === 'kg' ? 'lbs' : 'kg')}>
-          <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
-        </TouchableOpacity>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputGroupLabel}>Reps</Text>
-          <RNTextInput
-            value={entry.reps}
-            onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-            style={styles.inputGroupField}
-            placeholder="0"
-            placeholderTextColor={COLORS.textMuted}
-            keyboardType="numeric" />
-        </View>
-      </View>
-
-      {e1rm && (
-        <Text style={styles.e1rmText}>
-          est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
-        </Text>
-      )}
-    </View>
-  );
-})}
+            {ex.entries.map((entry, setIdx) => {
+              const e1rm = entry.weight && entry.reps
+                ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
+                : null;
+              return (
+                <View key={setIdx} style={styles.setCard}>
+                  <View style={styles.setCardHeader}>
+                    <View style={styles.setNumBadge}>
+                      <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
+                    </View>
+                    <View style={styles.setCardActions}>
+                      <TouchableOpacity
+                        style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                        onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                        <Text style={styles.prBtnText}>
+                          {entry.is_pb ? '🏆 PR' : '○ PR'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.removeSetBtn}
+                        onPress={() => removeSet(exIdx, setIdx)}>
+                        <Text style={styles.removeSetBtnText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={styles.setCardInputs}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputGroupLabel}>Weight</Text>
+                      <RNTextInput
+                        value={entry.weight}
+                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                        style={styles.inputGroupField}
+                        placeholder="0"
+                        placeholderTextColor={COLORS.textMuted}
+                        keyboardType="numeric" />
+                    </View>
+                    <TouchableOpacity style={styles.unitToggle}
+                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                      <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
+                    </TouchableOpacity>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputGroupLabel}>Reps</Text>
+                      <RNTextInput
+                        value={entry.reps}
+                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                        style={styles.inputGroupField}
+                        placeholder="0"
+                        placeholderTextColor={COLORS.textMuted}
+                        keyboardType="numeric" />
+                    </View>
+                  </View>
+                  {e1rm && (
+                    <Text style={styles.e1rmText}>
+                      est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
 
             <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
               <Text style={styles.addSetBtnText}>+ Add Set</Text>
@@ -284,22 +298,45 @@ export default function ClientLogScreen({ route, navigation }) {
           </View>
         ))}
 
-        {/* Add exercise */}
         <TouchableOpacity style={styles.addExBtn} onPress={() => setShowAddEx(true)}>
           <Text style={styles.addExBtnText}>➕ Add Exercise</Text>
         </TouchableOpacity>
 
-        {/* Save button */}
         <TouchableOpacity
           style={[styles.saveBtn, loading && { opacity: 0.6 }]}
-          onPress={handleSave}
-          disabled={loading}>
+          onPress={handleSave} disabled={loading}>
           <Text style={styles.saveBtnText}>
             {loading ? 'Saving...' : '💾 Save Workout'}
           </Text>
         </TouchableOpacity>
 
       </ScrollView>
+
+      {/* Date picker modal */}
+      <Modal visible={showDatePicker} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>📅 Select Date</Text>
+            <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
+            <RNTextInput value={dateInput} onChangeText={setDateInput}
+              style={styles.modalInput}
+              placeholder="e.g. 2026-04-15"
+              placeholderTextColor={COLORS.textMuted} />
+            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 12 }}>
+              You can log workouts for any past date
+            </Text>
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn}
+                onPress={() => setShowDatePicker(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={confirmDate}>
+                <Text style={styles.modalSaveText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add exercise modal */}
       <Modal visible={showAddEx} transparent animationType="slide">
@@ -353,7 +390,9 @@ const styles = StyleSheet.create({
   chipTextActive: { color: COLORS.white },
   dayBanner: { backgroundColor: COLORS.roseGoldDark, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   dayText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
-  unitText: { color: 'rgba(255,255,255,0.7)', fontSize: SIZES.xs },
+  dateSubText: { color: 'rgba(255,255,255,0.7)', fontSize: SIZES.xs, marginTop: 2 },
+  changeDateBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.md, backgroundColor: 'rgba(255,255,255,0.2)' },
+  changeDateBtnText: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.semibold },
   noteCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   noteInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, color: COLORS.white, fontSize: SIZES.sm, minHeight: 60, borderWidth: 1, borderColor: COLORS.darkBorder, textAlignVertical: 'top' },
   emptyCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 32, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
@@ -380,7 +419,7 @@ const styles = StyleSheet.create({
   inputGroupField: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 10, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 48 },
   unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 48, minWidth: 52 },
   unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.bold },
-  e1rmText: { color: COLORS.textMuted, fontSize: 10, textAlign: 'right', marginBottom: 4 },
+  e1rmText: { color: COLORS.textMuted, fontSize: 10, textAlign: 'right', marginTop: 4 },
   addSetBtn: { marginTop: 8, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
   addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm },
   addExBtn: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },

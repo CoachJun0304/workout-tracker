@@ -3,7 +3,7 @@ import {
   View, ScrollView, StyleSheet, TouchableOpacity,
   Platform, Modal, TextInput as RNTextInput
 } from 'react-native';
-import { Text, TextInput } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
@@ -23,7 +23,13 @@ export default function LogWorkoutScreen({ route, navigation }) {
     DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]
   );
   const [selectedMonth, setSelectedMonth] = useState(MONTHS[new Date().getMonth()]);
-  const [selectedWeek, setSelectedWeek] = useState('1');
+  const [selectedDate, setSelectedDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [dateInput, setDateInput] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [sessionNote, setSessionNote] = useState('');
   const [sets, setSets] = useState([
     { exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
@@ -37,12 +43,11 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
   if (!client) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0D0D0D', justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: 'white' }}>No client selected. Go back and select a client.</Text>
+      <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: COLORS.white }}>No client selected</Text>
       </View>
     );
   }
-
 
   async function fetchClientProgram() {
     const { data } = await supabase
@@ -56,18 +61,30 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
     if (data?.workout_templates?.template_exercises) {
       setProgram(data);
-      const todayExercises = data.workout_templates.template_exercises
-        .filter(e => e.day === selectedDay)
-        .sort((a, b) => a.order_index - b.order_index);
-      if (todayExercises.length > 0) {
-        setSets(todayExercises.map(ex => ({
-          exercise_name: ex.exercise_name,
-          muscle_group: ex.muscle_group || 'Other',
-          entries: Array.from({ length: ex.working_sets || 3 }, () => ({
-            weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
-          }))
-        })));
-      }
+      loadDayExercises(selectedDay, data);
+    }
+  }
+
+  function loadDayExercises(day, prog) {
+    const p = prog || program;
+    if (!p?.workout_templates?.template_exercises) return;
+    const seen = new Set();
+    const dayExs = p.workout_templates.template_exercises
+      .filter(e => e.day === day)
+      .sort((a, b) => a.order_index - b.order_index)
+      .filter(ex => {
+        if (seen.has(ex.exercise_name)) return false;
+        seen.add(ex.exercise_name);
+        return true;
+      });
+    if (dayExs.length > 0) {
+      setSets(dayExs.map(ex => ({
+        exercise_name: ex.exercise_name,
+        muscle_group: ex.muscle_group || 'Other',
+        entries: Array.from({ length: ex.working_sets || 3 }, () => ({
+          weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
+        }))
+      })));
     }
   }
 
@@ -111,6 +128,23 @@ export default function LogWorkoutScreen({ route, navigation }) {
     setShowAddEx(false);
   }
 
+  function confirmDate() {
+    if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      setSelectedDate(dateInput);
+      const d = new Date(dateInput + 'T12:00:00');
+      const month = MONTHS[d.getMonth()];
+      setSelectedMonth(month);
+      const dayIdx = d.getDay();
+      const newDay = DAYS[dayIdx === 0 ? 6 : dayIdx - 1];
+      setSelectedDay(newDay);
+      loadDayExercises(newDay, null);
+    } else {
+      showAlert('Invalid Date', 'Please use YYYY-MM-DD format');
+      return;
+    }
+    setShowDatePicker(false);
+  }
+
   async function handleSave() {
     const rows = [];
     for (const ex of sets) {
@@ -127,17 +161,18 @@ export default function LogWorkoutScreen({ route, navigation }) {
         const isPR = weightKg > currentPR;
         rows.push({
           client_id: client.id,
-          logged_by: user.id,
+          logged_by: user?.id,
           exercise_name: ex.exercise_name,
           muscle_group: ex.muscle_group,
           month: selectedMonth,
-          week: parseInt(selectedWeek),
+          week: 1,
           day: selectedDay,
           set_type: 'working',
           set_number: setIdx + 1,
           weight_kg: weightKg,
           reps: entry.reps ? parseInt(entry.reps) : null,
           is_personal_best: isPR,
+          logged_at: new Date(selectedDate + 'T12:00:00').toISOString(),
         });
       });
     }
@@ -148,7 +183,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
     if (sessionNote.trim()) {
       await supabase.from('session_notes').upsert({
         client_id: client.id,
-        date: new Date().toISOString().split('T')[0],
+        date: selectedDate,
         note: sessionNote.trim(),
       }, { onConflict: 'client_id,date' });
     }
@@ -159,7 +194,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
     const prs = rows.filter(r => r.is_personal_best).length;
     showAlert('✅ Workout Logged!',
-      `${rows.length} sets saved for ${client.name}!${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}`,
+      `${rows.length} sets saved for ${client.name} on ${selectedDate}!${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}`,
       [{ text: 'OK', onPress: () => navigation.goBack() }]
     );
   }
@@ -173,7 +208,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
           <View style={styles.clientAvatar}>
             <Text style={styles.clientAvatarText}>{client.name.charAt(0)}</Text>
           </View>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.clientName}>{client.name}</Text>
             <Text style={styles.clientSub}>
               {program ? program.workout_templates?.name : 'No program assigned'}
@@ -181,56 +216,28 @@ export default function LogWorkoutScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* Month */}
-        <Text style={styles.sectionLabel}>Month</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-          {MONTHS.map(m => (
-            <TouchableOpacity key={m}
-              style={[styles.chip, selectedMonth === m && styles.chipActive]}
-              onPress={() => setSelectedMonth(m)}>
-              <Text style={[styles.chipText, selectedMonth === m && styles.chipTextActive]}>
-                {m.slice(0, 3)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Week */}
-        <Text style={styles.sectionLabel}>Week</Text>
-        <View style={styles.weekRow}>
-          {['1', '2', '3', '4'].map(w => (
-            <TouchableOpacity key={w}
-              style={[styles.weekBtn, selectedWeek === w && styles.weekBtnActive]}
-              onPress={() => setSelectedWeek(w)}>
-              <Text style={[styles.weekBtnText, selectedWeek === w && styles.weekBtnTextActive]}>
-                Week {w}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        {/* Date banner */}
+        <View style={styles.dayBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dayText}>{selectedDay} — {selectedMonth}</Text>
+            <Text style={styles.dateSubText}>📅 {selectedDate}</Text>
+          </View>
+          <TouchableOpacity style={styles.changeDateBtn}
+            onPress={() => setShowDatePicker(true)}>
+            <Text style={styles.changeDateBtnText}>Change Date</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Day */}
+        {/* Day selector */}
         <Text style={styles.sectionLabel}>Day</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          style={styles.chipRow}>
           {DAYS.map(d => (
             <TouchableOpacity key={d}
               style={[styles.chip, selectedDay === d && styles.chipActive]}
               onPress={() => {
                 setSelectedDay(d);
-                if (program?.workout_templates?.template_exercises) {
-                  const dayExs = program.workout_templates.template_exercises
-                    .filter(e => e.day === d)
-                    .sort((a, b) => a.order_index - b.order_index);
-                  if (dayExs.length > 0) {
-                    setSets(dayExs.map(ex => ({
-                      exercise_name: ex.exercise_name,
-                      muscle_group: ex.muscle_group || 'Other',
-                      entries: Array.from({ length: ex.working_sets || 3 }, () => ({
-                        weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
-                      }))
-                    })));
-                  }
-                }
+                loadDayExercises(d, null);
               }}>
               <Text style={[styles.chipText, selectedDay === d && styles.chipTextActive]}>
                 {d.slice(0, 3)}
@@ -261,72 +268,65 @@ export default function LogWorkoutScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            {/* Set headers */}
-{ex.entries.map((entry, setIdx) => {
-  const e1rm = entry.weight && entry.reps
-    ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
-    : null;
-  return (
-    <View key={setIdx} style={styles.setCard}>
-      {/* Top row: Set number + PR toggle + Delete */}
-      <View style={styles.setCardHeader}>
-        <View style={styles.setNumBadge}>
-          <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
-        </View>
-        <View style={styles.setCardActions}>
-          <TouchableOpacity
-            style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
-            onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-            <Text style={styles.prBtnText}>
-              {entry.is_pb ? '🏆 PR' : '○ PR'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.removeSetBtn}
-            onPress={() => removeSet(exIdx, setIdx)}>
-            <Text style={styles.removeSetBtnText}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Bottom row: Weight + Unit + Reps */}
-      <View style={styles.setCardInputs}>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputGroupLabel}>Weight</Text>
-          <RNTextInput
-            value={entry.weight}
-            onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-            style={styles.inputGroupField}
-            placeholder="0"
-            placeholderTextColor={COLORS.textMuted}
-            keyboardType="numeric" />
-        </View>
-        <TouchableOpacity
-          style={styles.unitToggle}
-          onPress={() => updateEntry(exIdx, setIdx, 'unit',
-            entry.unit === 'kg' ? 'lbs' : 'kg')}>
-          <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
-        </TouchableOpacity>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputGroupLabel}>Reps</Text>
-          <RNTextInput
-            value={entry.reps}
-            onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-            style={styles.inputGroupField}
-            placeholder="0"
-            placeholderTextColor={COLORS.textMuted}
-            keyboardType="numeric" />
-        </View>
-      </View>
-
-      {e1rm && (
-        <Text style={styles.e1rmText}>
-          est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
-        </Text>
-      )}
-    </View>
-  );
-})}
+            {ex.entries.map((entry, setIdx) => {
+              const e1rm = entry.weight && entry.reps
+                ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
+                : null;
+              return (
+                <View key={setIdx} style={styles.setCard}>
+                  <View style={styles.setCardHeader}>
+                    <View style={styles.setNumBadge}>
+                      <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
+                    </View>
+                    <View style={styles.setCardActions}>
+                      <TouchableOpacity
+                        style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                        onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                        <Text style={styles.prBtnText}>
+                          {entry.is_pb ? '🏆 PR' : '○ PR'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.removeSetBtn}
+                        onPress={() => removeSet(exIdx, setIdx)}>
+                        <Text style={styles.removeSetBtnText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={styles.setCardInputs}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputGroupLabel}>Weight</Text>
+                      <RNTextInput
+                        value={entry.weight}
+                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                        style={styles.inputGroupField}
+                        placeholder="0"
+                        placeholderTextColor={COLORS.textMuted}
+                        keyboardType="numeric" />
+                    </View>
+                    <TouchableOpacity style={styles.unitToggle}
+                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                      <Text style={styles.unitToggleText}>{entry.unit}</Text>
+                    </TouchableOpacity>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputGroupLabel}>Reps</Text>
+                      <RNTextInput
+                        value={entry.reps}
+                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                        style={styles.inputGroupField}
+                        placeholder="0"
+                        placeholderTextColor={COLORS.textMuted}
+                        keyboardType="numeric" />
+                    </View>
+                  </View>
+                  {e1rm && (
+                    <Text style={styles.e1rmText}>
+                      est. 1RM: {toDisplay(e1rm, entry.unit)}{entry.unit}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
 
             <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
               <Text style={styles.addSetBtnText}>+ Add Set</Text>
@@ -347,6 +347,32 @@ export default function LogWorkoutScreen({ route, navigation }) {
         </TouchableOpacity>
 
       </ScrollView>
+
+      {/* Date picker modal */}
+      <Modal visible={showDatePicker} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>📅 Select Date</Text>
+            <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
+            <RNTextInput value={dateInput} onChangeText={setDateInput}
+              style={styles.modalInput}
+              placeholder="e.g. 2026-04-15"
+              placeholderTextColor={COLORS.textMuted} />
+            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 12 }}>
+              You can log workouts for any past date
+            </Text>
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn}
+                onPress={() => setShowDatePicker(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={confirmDate}>
+                <Text style={styles.modalSaveText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add exercise modal */}
       <Modal visible={showAddEx} transparent animationType="slide">
@@ -384,6 +410,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }
@@ -391,23 +418,23 @@ export default function LogWorkoutScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.darkBg },
   content: { padding: 16, paddingBottom: 40 },
-  clientBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, backgroundColor: COLORS.roseGoldDark, borderRadius: RADIUS.lg, marginBottom: 16 },
+  clientBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, backgroundColor: COLORS.roseGoldDark, borderRadius: RADIUS.lg, marginBottom: 12 },
   clientAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.3)', justifyContent: 'center', alignItems: 'center' },
   clientAvatarText: { color: COLORS.white, fontSize: 18, ...FONTS.bold },
   clientName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   clientSub: { color: 'rgba(255,255,255,0.7)', fontSize: SIZES.xs },
-  sectionLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, marginTop: 16 },
+  dayBanner: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
+  dayText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  dateSubText: { color: COLORS.textSecondary, fontSize: SIZES.xs, marginTop: 2 },
+  changeDateBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.md, backgroundColor: COLORS.roseGoldFaint, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  changeDateBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
+  sectionLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, marginTop: 12 },
   chipRow: { marginBottom: 4 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, marginRight: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
   chipActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
   chipText: { color: COLORS.textSecondary, ...FONTS.medium, fontSize: SIZES.sm },
   chipTextActive: { color: COLORS.white },
-  weekRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
-  weekBtn: { flex: 1, paddingVertical: 10, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
-  weekBtnActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
-  weekBtnText: { color: COLORS.textSecondary, ...FONTS.medium, fontSize: SIZES.sm },
-  weekBtnTextActive: { color: COLORS.white },
-  noteInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder2, minHeight: 60, textAlignVertical: 'top', marginBottom: 4 },
+  noteInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, minHeight: 60, textAlignVertical: 'top', marginBottom: 4 },
   exerciseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   exHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   exerciseName: { color: COLORS.white, fontSize: SIZES.lg, ...FONTS.bold },
@@ -428,7 +455,7 @@ const styles = StyleSheet.create({
   inputGroupField: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 10, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 48 },
   unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 48, minWidth: 52 },
   unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.bold },
-  e1rmText: { color: COLORS.textMuted, fontSize: 10, textAlign: 'right', marginBottom: 4 },
+  e1rmText: { color: COLORS.textMuted, fontSize: 10, textAlign: 'right', marginTop: 4 },
   addSetBtn: { marginTop: 8, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
   addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm },
   addExBtn: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
@@ -439,7 +466,7 @@ const styles = StyleSheet.create({
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 16 },
   modalLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6, marginTop: 4 },
-  modalInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.md, borderWidth: 1, borderColor: COLORS.darkBorder2, marginBottom: 8 },
+  modalInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.md, borderWidth: 1, borderColor: COLORS.darkBorder, marginBottom: 8 },
   modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
   modalCancelBtn: { flex: 1, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
   modalCancelText: { color: COLORS.textSecondary, ...FONTS.semibold },
