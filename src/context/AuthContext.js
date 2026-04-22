@@ -25,50 +25,57 @@ export function AuthProvider({ children }) {
   }, []);
 
   async function fetchProfile(authUserId) {
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUserId)
-        .single();
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUserId)
+      .single();
 
-      if (data) {
-        // Block inactive/removed clients
-        if (data.status === 'inactive') {
-          await supabase.auth.signOut();
-          setUser(null);
-          setProfile(null);
-          setLoading(false);
-          return;
-        }
-        setProfile(data);
-      } else {
-        // Create profile if missing
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData?.user) {
-          const newProfile = {
-            id: userData.user.id,
-            name: userData.user.user_metadata?.name ||
-                  userData.user.email.split('@')[0],
-            email: userData.user.email,
-            role: userData.user.user_metadata?.role || 'client',
-            gender: userData.user.user_metadata?.gender || 'Male',
-            status: 'active',
-            unit_preference: 'kg',
-          };
-          const { data: created } = await supabase
-            .from('profiles')
-            .insert(newProfile)
-            .select()
-            .single();
-          setProfile(created || newProfile);
-        }
-      }
-    } catch (e) {
-      console.log('Profile error:', e.message);
+    if (error && error.code !== 'PGRST116') {
+      // PGRST116 = no rows found, other errors = network issues
+      console.log('Profile fetch error:', error.message);
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+
+    if (data) {
+      // Only sign out if explicitly inactive
+      if (data.status === 'inactive') {
+        await supabase.auth.signOut();
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+      setProfile(data);
+    } else {
+      // No profile found — create one
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user) {
+        const newProfile = {
+          id: userData.user.id,
+          name: userData.user.user_metadata?.name ||
+                userData.user.email.split('@')[0],
+          email: userData.user.email,
+          role: userData.user.user_metadata?.role || 'client',
+          gender: userData.user.user_metadata?.gender || 'Male',
+          status: 'active',
+          unit_preference: 'kg',
+        };
+        const { data: created } = await supabase
+          .from('profiles')
+          .insert(newProfile)
+          .select()
+          .single();
+        setProfile(created || newProfile);
+      }
+    }
+  } catch (e) {
+    console.log('Profile error:', e.message);
   }
+  setLoading(false);
+}
 
   async function refreshProfile() {
     if (user) await fetchProfile(user.id);
