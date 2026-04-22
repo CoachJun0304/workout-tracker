@@ -148,10 +148,6 @@ function confirmSignOut() {
 
       {/* Free-form log button — always visible */}
       <TouchableOpacity style={styles.freeLogBtn}
-  onPress={() => navigation.navigate('WorkoutHistory')}>
-  <Text style={styles.freeLogBtnText}>📋 View Workout History</Text>
-</TouchableOpacity>
-      <TouchableOpacity style={styles.freeLogBtn}
         onPress={() => navigation.navigate('ClientLog', { exercises: [], day: today, freeLog: true })}>
         <Text style={styles.freeLogBtnText}>📝 Log a Workout Freely</Text>
       </TouchableOpacity>
