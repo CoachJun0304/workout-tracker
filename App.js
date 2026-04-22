@@ -1,3 +1,4 @@
+import WorkoutHistoryScreen from './src/screens/shared/WorkoutHistoryScreen';
 import ClientReportScreen from './src/screens/coach/ClientReportScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
@@ -61,6 +62,8 @@ const stackOptions = {
 function CoachClientsStack() {
   return (
     <Stack.Navigator screenOptions={stackOptions}>
+      <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen}
+        options={{ title: 'Workout History' }} />
       <Stack.Screen name="ClientsList" component={ClientsScreen}
         options={{ title: 'Clients' }} />
       <Stack.Screen name="ClientDetail" component={ClientDetailScreen}
@@ -127,6 +130,8 @@ function CoachTabs() {
 function ClientStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen}
+        options={{ ...stackOptions, headerShown: true, title: 'Workout History' }} />
       <Stack.Screen name="ClientHome" component={ClientHomeScreen} />
       <Stack.Screen name="ClientWorkout" component={ClientWorkoutScreen}
         options={{ ...stackOptions, headerShown: true, title: "Today's Workout" }} />

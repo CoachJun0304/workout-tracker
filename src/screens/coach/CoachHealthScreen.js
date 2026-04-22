@@ -1,14 +1,19 @@
-import { getPhaseForDate, CYCLE_PHASES } from '../../data/cycleData';
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput as RNTextInput } from 'react-native';
+import {
+  View, ScrollView, StyleSheet, TouchableOpacity,
+  Modal, TextInput as RNTextInput
+} from 'react-native';
 import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 import { toDisplay, toKg, unitLabel } from '../../utils/unitUtils';
 import { showAlert, showConfirm } from '../../utils/webAlert';
+import { getPhaseForDate, CYCLE_PHASES } from '../../data/cycleData';
 
-export default function CoachHealthScreen({ route, navigation }) {
+const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+export default function CoachHealthScreen({ route }) {
   const { client } = route.params || {};
   const { profile } = useAuth();
   const [tab, setTab] = useState('weight');
@@ -16,6 +21,8 @@ export default function CoachHealthScreen({ route, navigation }) {
   const [macroTargets, setMacroTargets] = useState(null);
   const [macroLogs, setMacroLogs] = useState([]);
   const [feedbacks, setFeedbacks] = useState([]);
+  const [cycles, setCycles] = useState([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [showTargetModal, setShowTargetModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
@@ -25,12 +32,10 @@ export default function CoachHealthScreen({ route, navigation }) {
   const [targetInput, setTargetInput] = useState({ protein: '', carbs: '', fats: '' });
   const [feedbackText, setFeedbackText] = useState('');
   const [loading, setLoading] = useState(false);
-  const [cycles, setCycles] = useState([]);
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const isFemale = client?.gender === 'Female';
-  const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
   const clientUnit = client?.unit_preference || 'kg';
   const ul = unitLabel(clientUnit);
+  const isFemale = client?.gender === 'Female';
 
   useEffect(() => {
     if (client?.id) fetchAll();
@@ -38,16 +43,21 @@ export default function CoachHealthScreen({ route, navigation }) {
 
   async function fetchAll() {
     try {
-            const [wRes, mRes, tRes, fRes, cRes] = await Promise.all([
-              supabase.from('weight_logs').select('*').eq('client_id', client.id)
-                .order('logged_at', { ascending: false }),
-              supabase.from('macro_logs').select('*').eq('client_id', client.id)
-                .order('date', { ascending: false }).limit(14),
-              supabase.from('macro_targets').select('*').eq('client_id', client.id).single(),
-              supabase.from('workout_feedback').select('*').eq('client_id', client.id)
-                .order('created_at', { ascending: false }),
-              supabase.from('menstrual_cycles').select('*').eq('client_id', client.id)
-                .order('cycle_start_date', { ascending: false }),
+      const [wRes, mRes, tRes, fRes, cRes] = await Promise.all([
+        supabase.from('weight_logs').select('*')
+          .eq('client_id', client.id)
+          .order('logged_at', { ascending: false }),
+        supabase.from('macro_logs').select('*')
+          .eq('client_id', client.id)
+          .order('date', { ascending: false }).limit(14),
+        supabase.from('macro_targets').select('*')
+          .eq('client_id', client.id).single(),
+        supabase.from('workout_feedback').select('*')
+          .eq('client_id', client.id)
+          .order('created_at', { ascending: false }),
+        supabase.from('menstrual_cycles').select('*')
+          .eq('client_id', client.id)
+          .order('cycle_start_date', { ascending: false }),
       ]);
       setWeightLogs(wRes.data || []);
       setMacroLogs(mRes.data || []);
@@ -132,6 +142,23 @@ export default function CoachHealthScreen({ route, navigation }) {
     fetchAll();
   }
 
+  function getCalendarCells() {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const phase = cycles.length > 0
+        ? getPhaseForDate(dateStr, cycles[0].cycle_start_date, cycles[0].cycle_length)
+        : null;
+      cells.push({ day: d, date: dateStr, phase });
+    }
+    return cells;
+  }
+
   if (!client) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
@@ -140,7 +167,10 @@ export default function CoachHealthScreen({ route, navigation }) {
     );
   }
 
-  const tabs = ['weight', 'macros', 'feedback', 'cycle'];
+  const todayStr = new Date().toISOString().split('T')[0];
+  const monthName = calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const tabs = ['weight', 'macros', 'feedback', ...(isFemale ? ['cycle'] : [])];
+  const tabLabels = ['⚖️ Weight', '🥗 Macros', '💬 Feedback', ...(isFemale ? ['🌸 Cycle'] : [])];
 
   return (
     <View style={styles.container}>
@@ -156,8 +186,10 @@ export default function CoachHealthScreen({ route, navigation }) {
       </View>
 
       {/* Tabs */}
-      <View style={styles.tabRow}>
-        {['⚖️ Weight', '🥗 Macros', '💬 Feedback', '🌸 Cycle'].map((label, i) => (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        style={styles.tabScroll}
+        contentContainerStyle={styles.tabScrollContent}>
+        {tabLabels.map((label, i) => (
           <TouchableOpacity key={i}
             style={[styles.tabBtn, tab === tabs[i] && styles.tabBtnActive]}
             onPress={() => setTab(tabs[i])}>
@@ -166,8 +198,9 @@ export default function CoachHealthScreen({ route, navigation }) {
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
+      {/* Main scrollable content */}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
 
         {/* WEIGHT TAB */}
@@ -182,9 +215,10 @@ export default function CoachHealthScreen({ route, navigation }) {
               }}>
               <Text style={styles.actionBtnText}>+ Log Weigh-in for {client.name}</Text>
             </TouchableOpacity>
-
             {weightLogs.length === 0
-              ? <View style={styles.empty}><Text style={styles.emptyText}>No weight logs yet</Text></View>
+              ? <View style={styles.empty}>
+                  <Text style={styles.emptyText}>No weight logs yet</Text>
+                </View>
               : weightLogs.map((log, i) => {
                   const prev = weightLogs[i + 1];
                   const diff = prev ? (log.weight_kg - prev.weight_kg).toFixed(1) : null;
@@ -257,17 +291,17 @@ export default function CoachHealthScreen({ route, navigation }) {
                 <Text style={styles.emptyText}>No macro targets set</Text>
               </View>
             )}
-
             <TouchableOpacity style={styles.actionBtn}
               onPress={() => setShowTargetModal(true)}>
               <Text style={styles.actionBtnText}>
                 {macroTargets ? '✏️ Edit Macro Targets' : '+ Set Macro Targets'}
               </Text>
             </TouchableOpacity>
-
             <Text style={styles.sectionTitle}>Recent Logs</Text>
             {macroLogs.length === 0
-              ? <View style={styles.empty}><Text style={styles.emptyText}>No macro logs yet</Text></View>
+              ? <View style={styles.empty}>
+                  <Text style={styles.emptyText}>No macro logs yet</Text>
+                </View>
               : macroLogs.map(log => (
                 <View key={log.date} style={styles.macroLogRow}>
                   <Text style={styles.macroLogDate}>{log.date}</Text>
@@ -291,7 +325,9 @@ export default function CoachHealthScreen({ route, navigation }) {
               <Text style={styles.actionBtnText}>+ Leave Feedback for {client.name}</Text>
             </TouchableOpacity>
             {feedbacks.length === 0
-              ? <View style={styles.empty}><Text style={styles.emptyText}>No feedback yet</Text></View>
+              ? <View style={styles.empty}>
+                  <Text style={styles.emptyText}>No feedback yet</Text>
+                </View>
               : feedbacks.map((fb, i) => (
                 <View key={i} style={styles.feedbackCard}>
                   <Text style={styles.feedbackDate}>{fb.workout_date}</Text>
@@ -299,6 +335,100 @@ export default function CoachHealthScreen({ route, navigation }) {
                 </View>
               ))
             }
+          </View>
+        )}
+
+        {/* CYCLE TAB */}
+        {tab === 'cycle' && (
+          <View>
+            {!isFemale ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>Not applicable</Text>
+              </View>
+            ) : cycles.length === 0 ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>No cycle data</Text>
+                <Text style={styles.emptySub}>
+                  Client needs to log their period in their Health tab
+                </Text>
+              </View>
+            ) : (
+              <View>
+                {/* Cycle info */}
+                <View style={styles.cycleInfoCard}>
+                  <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
+                  <Text style={styles.cycleInfoText}>
+                    Last period: {cycles[0].cycle_start_date}
+                  </Text>
+                  <Text style={styles.cycleInfoText}>
+                    Cycle: {cycles[0].cycle_length} days · Period: {cycles[0].period_length} days
+                  </Text>
+                </View>
+
+                {/* Phase legend */}
+                <View style={styles.phaseLegendRow}>
+                  {Object.values(CYCLE_PHASES).map(ph => (
+                    <View key={ph.name} style={styles.phaseLegendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: ph.color }]} />
+                      <Text style={styles.legendText}>{ph.emoji} {ph.name.split(' ')[0]}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Calendar */}
+                <View style={styles.calendarCard}>
+                  <View style={styles.calNav}>
+                    <TouchableOpacity onPress={() => setCalendarMonth(m =>
+                      new Date(m.getFullYear(), m.getMonth() - 1))}>
+                      <Text style={styles.calNavBtn}>‹</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.calMonthText}>{monthName}</Text>
+                    <TouchableOpacity onPress={() => setCalendarMonth(m =>
+                      new Date(m.getFullYear(), m.getMonth() + 1))}>
+                      <Text style={styles.calNavBtn}>›</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.calDayHeaders}>
+                    {DAYS_OF_WEEK.map(d => (
+                      <Text key={d} style={styles.calDayHeader}>{d}</Text>
+                    ))}
+                  </View>
+                  <View style={styles.calGrid}>
+                    {getCalendarCells().map((cell, i) => {
+                      if (!cell) return <View key={`e${i}`} style={styles.calCell} />;
+                      const isToday = cell.date === todayStr;
+                      return (
+                        <View key={cell.date} style={styles.calCell}>
+                          <View style={[styles.calCellInner, {
+                            backgroundColor: cell.phase ? cell.phase.color + '40' : 'transparent',
+                            borderColor: isToday ? COLORS.roseGold : cell.phase ? cell.phase.color : COLORS.darkBorder,
+                            borderWidth: isToday ? 2 : 1,
+                          }]}>
+                            <Text style={[styles.calCellDay, {
+                              color: isToday ? COLORS.roseGold : COLORS.white
+                            }]}>{cell.day}</Text>
+                            {cell.phase && <Text style={{ fontSize: 6 }}>{cell.phase.emoji}</Text>}
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Phase cards */}
+                {Object.values(CYCLE_PHASES).map(phase => (
+                  <View key={phase.name}
+                    style={[styles.phaseCard, { borderColor: phase.color }]}>
+                    <Text style={[styles.phaseTitle, { color: phase.color }]}>
+                      {phase.emoji} {phase.name}
+                    </Text>
+                    <Text style={styles.phaseRec}>💪 {phase.workoutRecommendations[0]}</Text>
+                    <Text style={styles.phaseRec}>🥗 {phase.nutritionTips[0]}</Text>
+                    <Text style={styles.phaseRec}>⚖️ {phase.weightNote}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
 
@@ -382,7 +512,7 @@ export default function CoachHealthScreen({ route, navigation }) {
             <Text style={styles.modalLabel}>Feedback</Text>
             <RNTextInput value={feedbackText} onChangeText={setFeedbackText}
               style={[styles.modalInput, { minHeight: 100, textAlignVertical: 'top' }]}
-              placeholder="e.g. Great session! Increase bench by 2.5kg next week..."
+              placeholder="e.g. Great session! Increase bench next week..."
               placeholderTextColor={COLORS.textMuted} multiline />
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancelBtn}
@@ -397,119 +527,7 @@ export default function CoachHealthScreen({ route, navigation }) {
           </View>
         </View>
       </Modal>
-      
 
-      {/* CYCLE TAB */}
-{tab === 'cycle' && (
-  <View>
-    {!isFemale ? (
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>Not applicable</Text>
-        <Text style={{ color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 }}>
-          Cycle tracking is only available for female clients
-        </Text>
-      </View>
-    ) : cycles.length === 0 ? (
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>No cycle data</Text>
-        <Text style={{ color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 }}>
-          Client needs to log their period in their Health tab
-        </Text>
-      </View>
-    ) : (
-      <View>
-        {/* Cycle info */}
-        <View style={styles.cycleInfoCard}>
-          <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
-          <Text style={styles.cycleInfoText}>
-            Last period: {cycles[0].cycle_start_date}
-          </Text>
-          <Text style={styles.cycleInfoText}>
-            Cycle: {cycles[0].cycle_length} days · Period: {cycles[0].period_length} days
-          </Text>
-        </View>
-
-        {/* Phase legend */}
-        <View style={styles.phaseLegendRow}>
-          {Object.values(CYCLE_PHASES).map(ph => (
-            <View key={ph.name} style={styles.phaseLegendItem}>
-              <View style={[styles.legendDot, { backgroundColor: ph.color }]} />
-              <Text style={styles.legendText}>{ph.emoji} {ph.name.split(' ')[0]}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Calendar */}
-        <View style={styles.calendarCard}>
-          <View style={styles.calNav}>
-            <TouchableOpacity onPress={() => setCalendarMonth(m =>
-              new Date(m.getFullYear(), m.getMonth() - 1))}>
-              <Text style={styles.calNavBtn}>‹</Text>
-            </TouchableOpacity>
-            <Text style={styles.calMonthText}>
-              {calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
-            </Text>
-            <TouchableOpacity onPress={() => setCalendarMonth(m =>
-              new Date(m.getFullYear(), m.getMonth() + 1))}>
-              <Text style={styles.calNavBtn}>›</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.calDayHeaders}>
-            {DAYS_OF_WEEK.map(d => (
-              <Text key={d} style={styles.calDayHeader}>{d}</Text>
-            ))}
-          </View>
-          <View style={styles.calGrid}>
-            {(() => {
-              const year = calendarMonth.getFullYear();
-              const month = calendarMonth.getMonth();
-              const firstDay = new Date(year, month, 1).getDay();
-              const daysInMonth = new Date(year, month + 1, 0).getDate();
-              const todayStr = new Date().toISOString().split('T')[0];
-              const cells = [];
-              for (let i = 0; i < firstDay; i++) cells.push(null);
-              for (let d = 1; d <= daysInMonth; d++) {
-                const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                const phase = getPhaseForDate(dateStr, cycles[0].cycle_start_date, cycles[0].cycle_length);
-                cells.push({ day: d, date: dateStr, phase });
-              }
-              return cells.map((cell, i) => {
-                if (!cell) return <View key={`e${i}`} style={styles.calCell} />;
-                const isToday = cell.date === todayStr;
-                return (
-                  <View key={cell.date} style={styles.calCell}>
-                    <View style={[styles.calCellInner, {
-                      backgroundColor: cell.phase ? cell.phase.color + '40' : 'transparent',
-                      borderColor: isToday ? COLORS.roseGold : cell.phase ? cell.phase.color : COLORS.darkBorder,
-                      borderWidth: isToday ? 2 : 1,
-                    }]}>
-                      <Text style={[styles.calCellDay, {
-                        color: isToday ? COLORS.roseGold : COLORS.white
-                      }]}>{cell.day}</Text>
-                      {cell.phase && <Text style={{ fontSize: 6 }}>{cell.phase.emoji}</Text>}
-                    </View>
-                  </View>
-                );
-              });
-            })()}
-          </View>
-        </View>
-
-        {/* Phase cards */}
-        {Object.values(CYCLE_PHASES).map(phase => (
-          <View key={phase.name} style={[styles.phaseCard, { borderColor: phase.color }]}>
-            <Text style={[styles.phaseTitle, { color: phase.color }]}>
-              {phase.emoji} {phase.name}
-            </Text>
-            <Text style={styles.phaseRec}>💪 {phase.workoutRecommendations[0]}</Text>
-            <Text style={styles.phaseRec}>🥗 {phase.nutritionTips[0]}</Text>
-            <Text style={styles.phaseRec}>⚖️ {phase.weightNote}</Text>
-          </View>
-        ))}
-      </View>
-    )}
-  </View>
-)}
     </View>
   );
 }
@@ -521,18 +539,20 @@ const styles = StyleSheet.create({
   avatarText: { color: COLORS.roseGold, fontSize: 20, ...FONTS.bold },
   clientName: { color: COLORS.white, fontSize: SIZES.lg, ...FONTS.bold },
   clientSub: { color: COLORS.textSecondary, fontSize: SIZES.xs, marginTop: 2 },
-  tabRow: { flexDirection: 'row', padding: 12, gap: 8 },
-  tabBtn: { flex: 1, paddingVertical: 10, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
+  tabScroll: { maxHeight: 52, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder },
+  tabScrollContent: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  tabBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, borderWidth: 1, borderColor: COLORS.darkBorder },
   tabBtnActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
   tabText: { color: COLORS.textSecondary, ...FONTS.semibold, fontSize: SIZES.xs },
   tabTextActive: { color: COLORS.white },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  scrollContent: { padding: 16, paddingBottom: 60 },
   actionBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', marginBottom: 16 },
   actionBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   sectionTitle: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, marginTop: 8 },
   empty: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 32, alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: COLORS.darkBorder },
-  emptyText: { color: COLORS.textMuted },
+  emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
+  emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4, textAlign: 'center' },
   logRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
   logDate: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.md },
   logNotes: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
@@ -555,16 +575,6 @@ const styles = StyleSheet.create({
   feedbackCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid, borderLeftWidth: 3, borderLeftColor: COLORS.roseGold },
   feedbackDate: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold, marginBottom: 4 },
   feedbackText: { color: COLORS.white, fontSize: SIZES.sm, lineHeight: 20 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
-  modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 16 },
-  modalLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6, marginTop: 4 },
-  modalInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.md, borderWidth: 1, borderColor: COLORS.darkBorder2, marginBottom: 8 },
-  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  modalCancelBtn: { flex: 1, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
-  modalCancelText: { color: COLORS.textSecondary, ...FONTS.semibold },
-  modalSaveBtn: { flex: 2, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.roseGold, alignItems: 'center' },
-  modalSaveText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   cycleInfoCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   cycleInfoTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 8 },
   cycleInfoText: { color: COLORS.textSecondary, fontSize: SIZES.sm, marginBottom: 4 },
@@ -585,4 +595,14 @@ const styles = StyleSheet.create({
   phaseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderLeftWidth: 3 },
   phaseTitle: { ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6 },
   phaseRec: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 2 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
+  modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 16 },
+  modalLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6, marginTop: 4 },
+  modalInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.md, borderWidth: 1, borderColor: COLORS.darkBorder, marginBottom: 8 },
+  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
+  modalCancelBtn: { flex: 1, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
+  modalCancelText: { color: COLORS.textSecondary, ...FONTS.semibold },
+  modalSaveBtn: { flex: 2, paddingVertical: 14, borderRadius: RADIUS.full, backgroundColor: COLORS.roseGold, alignItems: 'center' },
+  modalSaveText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
 });
