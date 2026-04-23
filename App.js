@@ -1,3 +1,4 @@
+import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -193,6 +194,11 @@ function ClientTabs() {
 // ── ROOT NAVIGATOR ──────────────────────────────────────────
 function AppNavigator() {
   const { user, loading, isCoach } = useAuth();
+
+<Stack.Navigator screenOptions={{ headerShown: false }}>
+  <Stack.Screen name="Login" component={LoginScreen} />
+  <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+</Stack.Navigator>
 
   if (loading) {
     return (
