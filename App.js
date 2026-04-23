@@ -1,4 +1,3 @@
-import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -11,6 +10,7 @@ import { COLORS, FONTS, SIZES } from './src/theme';
 
 // Auth
 import LoginScreen from './src/screens/auth/LoginScreen';
+import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 
 // Coach
 import DashboardScreen from './src/screens/coach/DashboardScreen';
@@ -195,11 +195,6 @@ function ClientTabs() {
 function AppNavigator() {
   const { user, loading, isCoach } = useAuth();
 
-<Stack.Navigator screenOptions={{ headerShown: false }}>
-  <Stack.Screen name="Login" component={LoginScreen} />
-  <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
-</Stack.Navigator>
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -214,6 +209,7 @@ function AppNavigator() {
       {!user ? (
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
         </Stack.Navigator>
       ) : isCoach ? (
         <CoachTabs />
