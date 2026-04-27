@@ -8,7 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 import { toKg, toDisplay, unitLabel, estimated1RM } from '../../utils/unitUtils';
-import { showAlert, showConfirm } from '../../utils/webAlert';
+import { showAlert } from '../../utils/webAlert';
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
@@ -18,14 +18,16 @@ export default function ClientReportScreen({ route, navigation }) {
   const { client } = route.params || {};
   const { profile, unit } = useAuth();
   const ul = unitLabel(unit);
+
   const [program, setProgram] = useState(null);
   const [workoutLogs, setWorkoutLogs] = useState([]);
   const [scheduleChanges, setScheduleChanges] = useState([]);
   const [sessionNotes, setSessionNotes] = useState([]);
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [expandedDays, setExpandedDays] = useState({});
 
-  // Log workout modal
+  // Log modal
   const [showLogModal, setShowLogModal] = useState(false);
   const [logDay, setLogDay] = useState('');
   const [logDate, setLogDate] = useState('');
@@ -37,11 +39,11 @@ export default function ClientReportScreen({ route, navigation }) {
 
   useEffect(() => { if (client?.id) fetchData(); }, [weekOffset]);
 
-  function getWeekDates(offset = 0) {
+  function getWeekDates() {
     const now = new Date();
     const day = now.getDay();
     const monday = new Date(now);
-    monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1) + offset * 7);
+    monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1) + weekOffset * 7);
     return DAYS.map((_, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
@@ -49,7 +51,7 @@ export default function ClientReportScreen({ route, navigation }) {
     });
   }
 
-  const weekDates = getWeekDates(weekOffset);
+  const weekDates = getWeekDates();
   const weekStart = weekDates[0];
   const weekEnd = weekDates[6];
 
@@ -89,7 +91,6 @@ export default function ClientReportScreen({ route, navigation }) {
 
   function getDayStatus(day, date) {
     const programExercises = program?.workout_templates?.template_exercises || [];
-    const seen = new Set();
     const hasProgram = programExercises.some(e => e.day === day);
     const change = scheduleChanges.find(c => c.original_day === day || c.original_date === date);
     const dayLogs = workoutLogs.filter(l => l.logged_at?.split('T')[0] === date);
@@ -124,15 +125,52 @@ export default function ClientReportScreen({ route, navigation }) {
       else if (s.status === 'missed_auto' || s.status === 'missed') missed++;
       else if (s.status === 'moved') moved++;
     });
-    return { logged, missed, moved, total: trainingDays.length };
+    const total = trainingDays.length;
+    const rate = total > 0 ? Math.round((logged / total) * 100) : 0;
+    return { logged, missed, moved, total, rate };
   }
+
+  // ── COMPLIANCE SCORING PER EXERCISE ─────────────────
+
+  function getExerciseCompliance(prescribed, actualSets) {
+    if (!actualSets || actualSets.length === 0) {
+      return { score: 0, label: 'Not Done', color: COLORS.error, emoji: '❌' };
+    }
+
+    const prescribedSets = parseInt(prescribed.working_sets) || 3;
+    const prescribedReps = parseInt(prescribed.reps) || 0;
+
+    const completedSets = actualSets.length;
+    const avgReps = actualSets.reduce((s, l) => s + (l.reps || 0), 0) / actualSets.length;
+    const maxWeight = Math.max(...actualSets.map(l => l.weight_kg || 0));
+
+    // Sets compliance
+    const setsScore = Math.min(completedSets / prescribedSets, 1);
+    // Reps compliance (if prescribed reps exist)
+    const repsScore = prescribedReps > 0
+      ? Math.min(avgReps / prescribedReps, 1)
+      : 1;
+
+    const overall = ((setsScore + repsScore) / 2) * 100;
+
+    if (overall >= 90) return { score: Math.round(overall), label: 'Excellent', color: COLORS.success, emoji: '🏆' };
+    if (overall >= 75) return { score: Math.round(overall), label: 'Good', color: '#4ECDC4', emoji: '✅' };
+    if (overall >= 50) return { score: Math.round(overall), label: 'Partial', color: '#FFB347', emoji: '⚠️' };
+    return { score: Math.round(overall), label: 'Incomplete', color: COLORS.error, emoji: '❌' };
+  }
+
+  function getTotalVolume(sets) {
+    return sets.reduce((total, s) => {
+      return total + ((s.weight_kg || 0) * (s.reps || 0));
+    }, 0).toFixed(0);
+  }
+
+  // ── LOG MODAL HELPERS ───────────────────────────────
 
   function openLogModal(day, date) {
     setLogDay(day);
     setLogDate(date);
     setLogNote('');
-
-    // Pre-load exercises from program for this day
     const programExercises = program?.workout_templates?.template_exercises || [];
     const seen = new Set();
     const dayExs = programExercises
@@ -143,18 +181,18 @@ export default function ClientReportScreen({ route, navigation }) {
         seen.add(ex.exercise_name);
         return true;
       });
-
-    if (dayExs.length > 0) {
-      setLogSets(dayExs.map(ex => ({
-        exercise_name: ex.exercise_name,
-        muscle_group: ex.muscle_group || 'Other',
-        entries: Array.from({ length: ex.working_sets || 3 }, () => ({
-          weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
+    setLogSets(dayExs.length > 0
+      ? dayExs.map(ex => ({
+          exercise_name: ex.exercise_name,
+          muscle_group: ex.muscle_group || 'Other',
+          prescribed_sets: ex.working_sets || 3,
+          prescribed_reps: ex.reps || '',
+          entries: Array.from({ length: ex.working_sets || 3 }, () => ({
+            weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
+          }))
         }))
-      })));
-    } else {
-      setLogSets([{ exercise_name: '', muscle_group: 'Chest', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }]);
-    }
+      : [{ exercise_name: '', muscle_group: 'Chest', prescribed_sets: 3, prescribed_reps: '', entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }]
+    );
     setShowLogModal(true);
   }
 
@@ -188,6 +226,8 @@ export default function ClientReportScreen({ route, navigation }) {
     setLogSets(s => [...s, {
       exercise_name: newEx.name.trim(),
       muscle_group: newEx.muscle_group,
+      prescribed_sets: 3,
+      prescribed_reps: '',
       entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }]
     }]);
     setNewEx({ name: '', muscle_group: 'Chest' });
@@ -214,7 +254,8 @@ export default function ClientReportScreen({ route, navigation }) {
           logged_by: profile.id,
           exercise_name: ex.exercise_name,
           muscle_group: ex.muscle_group,
-          month: new Date(logDate + 'T12:00:00').toLocaleString('default', { month: 'long' }).toUpperCase(),
+          month: new Date(logDate + 'T12:00:00')
+            .toLocaleString('default', { month: 'long' }).toUpperCase(),
           week: 1,
           day: logDay,
           set_type: 'working',
@@ -243,7 +284,10 @@ export default function ClientReportScreen({ route, navigation }) {
     if (error) { showAlert('Error', error.message); return; }
 
     setShowLogModal(false);
-    showAlert('✅ Logged!', `${rows.length} sets saved for ${client.name} on ${logDate}`);
+    const prs = rows.filter(r => r.is_personal_best).length;
+    showAlert('✅ Logged!',
+      `${rows.length} sets saved for ${client.name} on ${logDate}${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}`
+    );
     fetchData();
   }
 
@@ -281,66 +325,109 @@ export default function ClientReportScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
         <Text style={styles.weekDates}>
-          {new Date(weekStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} —{' '}
-          {new Date(weekEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          {new Date(weekStart + 'T12:00:00').toLocaleDateString('en-US',
+            { month: 'short', day: 'numeric' })} —{' '}
+          {new Date(weekEnd + 'T12:00:00').toLocaleDateString('en-US',
+            { month: 'short', day: 'numeric', year: 'numeric' })}
         </Text>
 
         {/* Compliance stats */}
         {program && (
-          <View style={styles.statsRow}>
-            <View style={[styles.statCard, { borderColor: COLORS.success }]}>
-              <Text style={[styles.statValue, { color: COLORS.success }]}>{stats.logged}</Text>
-              <Text style={styles.statLabel}>Logged</Text>
+          <View>
+            <View style={styles.statsRow}>
+              <View style={[styles.statCard, { borderColor: COLORS.success }]}>
+                <Text style={[styles.statValue, { color: COLORS.success }]}>{stats.logged}</Text>
+                <Text style={styles.statLabel}>Logged</Text>
+              </View>
+              <View style={[styles.statCard, { borderColor: COLORS.error }]}>
+                <Text style={[styles.statValue, { color: COLORS.error }]}>{stats.missed}</Text>
+                <Text style={styles.statLabel}>Missed</Text>
+              </View>
+              <View style={[styles.statCard, { borderColor: COLORS.roseGold }]}>
+                <Text style={[styles.statValue, { color: COLORS.roseGold }]}>{stats.moved}</Text>
+                <Text style={styles.statLabel}>Moved</Text>
+              </View>
+              <View style={[styles.statCard, {
+                borderColor: stats.rate >= 80 ? COLORS.success
+                  : stats.rate >= 50 ? '#FFB347' : COLORS.error
+              }]}>
+                <Text style={[styles.statValue, {
+                  color: stats.rate >= 80 ? COLORS.success
+                    : stats.rate >= 50 ? '#FFB347' : COLORS.error
+                }]}>{stats.rate}%</Text>
+                <Text style={styles.statLabel}>Rate</Text>
+              </View>
             </View>
-            <View style={[styles.statCard, { borderColor: COLORS.error }]}>
-              <Text style={[styles.statValue, { color: COLORS.error }]}>{stats.missed}</Text>
-              <Text style={styles.statLabel}>Missed</Text>
+
+            {/* Compliance bar */}
+            <View style={styles.complianceBarBg}>
+              <View style={[styles.complianceBarFill, {
+                width: `${stats.rate}%`,
+                backgroundColor: stats.rate >= 80 ? COLORS.success
+                  : stats.rate >= 50 ? '#FFB347' : COLORS.error,
+              }]} />
             </View>
-            <View style={[styles.statCard, { borderColor: COLORS.roseGold }]}>
-              <Text style={[styles.statValue, { color: COLORS.roseGold }]}>{stats.moved}</Text>
-              <Text style={styles.statLabel}>Moved</Text>
-            </View>
-            <View style={[styles.statCard, { borderColor: COLORS.darkBorder }]}>
-              <Text style={styles.statValue}>
-                {stats.total > 0 ? Math.round((stats.logged / stats.total) * 100) : 0}%
-              </Text>
-              <Text style={styles.statLabel}>Rate</Text>
-            </View>
+            <Text style={styles.complianceBarLabel}>
+              {stats.logged} of {stats.total} training days completed
+            </Text>
           </View>
         )}
 
         {!program && (
           <View style={styles.noProgram}>
             <Text style={styles.noProgramText}>📋 No active program assigned</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('AssignProgram', { client })}>
+              <Text style={styles.noProgramLink}>Assign a program →</Text>
+            </TouchableOpacity>
           </View>
         )}
 
         {/* Day by day */}
         <Text style={styles.sectionTitle}>Day-by-Day Breakdown</Text>
+
         {DAYS.map((day, i) => {
           const date = weekDates[i];
           const status = getDayStatus(day, date);
-          const programExercises = (program?.workout_templates?.template_exercises || [])
-            .filter(e => e.day === day);
+          const allProgramExercises = program?.workout_templates?.template_exercises || [];
           const seen = new Set();
-          const uniqueExercises = programExercises.filter(ex => {
-            if (seen.has(ex.exercise_name)) return false;
-            seen.add(ex.exercise_name);
-            return true;
-          });
+          const uniqueProgramExercises = allProgramExercises
+            .filter(e => e.day === day)
+            .sort((a, b) => a.order_index - b.order_index)
+            .filter(ex => {
+              if (seen.has(ex.exercise_name)) return false;
+              seen.add(ex.exercise_name);
+              return true;
+            });
+
           const dayLogs = workoutLogs.filter(l => l.logged_at?.split('T')[0] === date);
           const note = sessionNotes.find(n => n.date === date);
+          const isExpanded = expandedDays[date] !== false;
 
           // Group logged sets by exercise
-          const loggedExercises = {};
+          const loggedByExercise = {};
           dayLogs.forEach(log => {
-            if (!loggedExercises[log.exercise_name]) loggedExercises[log.exercise_name] = [];
-            loggedExercises[log.exercise_name].push(log);
+            if (!loggedByExercise[log.exercise_name])
+              loggedByExercise[log.exercise_name] = [];
+            loggedByExercise[log.exercise_name].push(log);
           });
+
+          // Overall day compliance score
+          let dayScore = null;
+          if (status.status === 'logged' && uniqueProgramExercises.length > 0) {
+            const scores = uniqueProgramExercises.map(ex => {
+              const actual = loggedByExercise[ex.exercise_name] || [];
+              return getExerciseCompliance(ex, actual).score;
+            });
+            dayScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+          }
 
           return (
             <View key={day} style={[styles.dayCard, { borderLeftColor: status.color }]}>
-              <View style={styles.dayHeader}>
+
+              {/* Day header — always visible */}
+              <TouchableOpacity style={styles.dayHeader}
+                onPress={() => setExpandedDays(e => ({ ...e, [date]: !isExpanded }))}>
                 <View style={{ flex: 1 }}>
                   <View style={styles.dayTitleRow}>
                     <Text style={styles.dayName}>{day}</Text>
@@ -354,91 +441,229 @@ export default function ClientReportScreen({ route, navigation }) {
                     <Text style={[styles.statusLabel, { color: status.color }]}>
                       {status.label}
                     </Text>
+                    {dayScore !== null && (
+                      <View style={[styles.dayScoreBadge, {
+                        backgroundColor: dayScore >= 90 ? COLORS.success + '22'
+                          : dayScore >= 75 ? '#4ECDC422'
+                          : dayScore >= 50 ? '#FFB34722' : '#FF4B4B22',
+                        borderColor: dayScore >= 90 ? COLORS.success
+                          : dayScore >= 75 ? '#4ECDC4'
+                          : dayScore >= 50 ? '#FFB347' : COLORS.error,
+                      }]}>
+                        <Text style={[styles.dayScoreText, {
+                          color: dayScore >= 90 ? COLORS.success
+                            : dayScore >= 75 ? '#4ECDC4'
+                            : dayScore >= 50 ? '#FFB347' : COLORS.error,
+                        }]}>{dayScore}% compliance</Text>
+                      </View>
+                    )}
                   </View>
-                  {status.note && (
-                    <Text style={styles.statusNote}>📝 {status.note}</Text>
+                </View>
+
+                <View style={styles.dayHeaderRight}>
+                  {/* Log button */}
+                  {status.status !== 'rest' && (
+                    <TouchableOpacity style={styles.logBtn}
+                      onPress={(e) => {
+                        e && e.stopPropagation && e.stopPropagation();
+                        openLogModal(day, date);
+                      }}>
+                      <Text style={styles.logBtnText}>
+                        {status.status === 'logged' ? '+ More' : '+ Log'}
+                      </Text>
+                    </TouchableOpacity>
                   )}
+                  <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
                 </View>
+              </TouchableOpacity>
 
-                {/* Log button — show for past/today training days */}
-                {(status.status === 'missed_auto' || status.status === 'today' ||
-                  status.status === 'logged' || status.status === 'upcoming') &&
-                  status.status !== 'rest' && (
-                  <TouchableOpacity style={styles.logBtn}
-                    onPress={() => openLogModal(day, date)}>
-                    <Text style={styles.logBtnText}>
-                      {status.status === 'logged' ? '+ Add More' : '+ Log'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+              {/* Expanded content */}
+              {isExpanded && (
+                <View style={styles.dayExpanded}>
 
-              {/* Session note */}
-              {note && (
-                <View style={styles.noteBox}>
-                  <Text style={styles.noteLabel}>📝 Client Note:</Text>
-                  <Text style={styles.noteText}>{note.note}</Text>
-                </View>
-              )}
+                  {/* Session note */}
+                  {note && (
+                    <View style={styles.noteBox}>
+                      <Text style={styles.noteLabel}>📝 Client Note:</Text>
+                      <Text style={styles.noteText}>{note.note}</Text>
+                    </View>
+                  )}
 
-              {/* Program exercises */}
-              {uniqueExercises.length > 0 && dayLogs.length === 0 && (
-                <View style={styles.exerciseList}>
-                  {uniqueExercises.map((ex, j) => (
-                    <Text key={j} style={styles.exerciseItem}>
-                      • {ex.exercise_name} — {ex.working_sets}×{ex.reps}
-                    </Text>
-                  ))}
-                </View>
-              )}
+                  {/* ── PRESCRIBED vs ACTUAL per exercise ── */}
+                  {uniqueProgramExercises.length > 0 && (
+                    <View>
+                      <Text style={styles.prescribedHeader}>📋 Program vs Actual</Text>
+                      {uniqueProgramExercises.map((ex, ei) => {
+                        const actualSets = loggedByExercise[ex.exercise_name] || [];
+                        const compliance = getExerciseCompliance(ex, actualSets);
+                        const volume = getTotalVolume(actualSets);
+                        const hasPR = actualSets.some(s => s.is_personal_best);
+                        const maxWeight = actualSets.length > 0
+                          ? Math.max(...actualSets.map(s => s.weight_kg || 0))
+                          : null;
 
-              {/* Actual logged data */}
-              {Object.entries(loggedExercises).map(([exName, sets]) => {
-                const maxWeight = Math.max(...sets.map(s => s.weight_kg || 0));
-                const hasPR = sets.some(s => s.is_personal_best);
-                return (
-                  <View key={exName} style={styles.loggedExercise}>
-                    <View style={styles.loggedExHeader}>
-                      <Text style={styles.loggedExName}>{exName}</Text>
-                      {hasPR && <Text style={styles.prBadge}>🏆 PR</Text>}
-                      {maxWeight > 0 && (
-                        <Text style={styles.loggedMaxWeight}>
-                          Best: {toDisplay(maxWeight, unit)}{ul}
+                        return (
+                          <View key={ei} style={styles.exerciseCompareCard}>
+                            {/* Exercise name + compliance */}
+                            <View style={styles.exCompareHeader}>
+                              <View style={{ flex: 1 }}>
+                                <View style={styles.exNameRow}>
+                                  <Text style={styles.exCompareName}>{ex.exercise_name}</Text>
+                                  {hasPR && <Text style={styles.prBadge}>🏆 PR</Text>}
+                                </View>
+                                <Text style={styles.exCompareMuscle}>{ex.muscle_group}</Text>
+                              </View>
+                              <View style={[styles.complianceBadge, {
+                                backgroundColor: compliance.color + '22',
+                                borderColor: compliance.color,
+                              }]}>
+                                <Text style={styles.complianceBadgeEmoji}>{compliance.emoji}</Text>
+                                <Text style={[styles.complianceBadgeScore,
+                                  { color: compliance.color }]}>
+                                  {compliance.score}%
+                                </Text>
+                                <Text style={[styles.complianceBadgeLabel,
+                                  { color: compliance.color }]}>
+                                  {compliance.label}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {/* Prescribed row */}
+                            <View style={styles.prescribedRow}>
+                              <View style={styles.prescribedTag}>
+                                <Text style={styles.prescribedTagText}>PRESCRIBED</Text>
+                              </View>
+                              <Text style={styles.prescribedDetail}>
+                                {ex.working_sets || 3} sets × {ex.reps || '?'} reps
+                                {ex.warmup_sets > 0 ? ` + ${ex.warmup_sets} warm-up` : ''}
+                              </Text>
+                            </View>
+
+                            {/* Actual sets */}
+                            {actualSets.length > 0 ? (
+                              <View>
+                                <View style={styles.actualTag}>
+                                  <Text style={styles.actualTagText}>ACTUAL</Text>
+                                  {maxWeight > 0 && (
+                                    <Text style={styles.actualBest}>
+                                      Best: {toDisplay(maxWeight, unit)}{ul}
+                                    </Text>
+                                  )}
+                                  {parseFloat(volume) > 0 && (
+                                    <Text style={styles.actualVolume}>
+                                      Vol: {toDisplay(parseFloat(volume), unit)}{ul}
+                                    </Text>
+                                  )}
+                                </View>
+                                <View style={styles.actualSetsGrid}>
+                                  {actualSets.map((s, si) => (
+                                    <View key={si} style={[styles.actualSetChip,
+                                      s.is_personal_best && styles.actualSetChipPR]}>
+                                      <Text style={styles.actualSetNum}>Set {s.set_number}</Text>
+                                      <Text style={styles.actualSetWeight}>
+                                        {s.weight_kg
+                                          ? `${toDisplay(s.weight_kg, unit)}${ul}`
+                                          : 'BW'}
+                                      </Text>
+                                      <Text style={styles.actualSetReps}>
+                                        × {s.reps || '—'} reps
+                                      </Text>
+                                      {s.is_personal_best && (
+                                        <Text style={styles.prFlag}>🏆</Text>
+                                      )}
+                                    </View>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : (
+                              <View style={styles.notDoneRow}>
+                                <Text style={styles.notDoneText}>Not logged</Text>
+                                <TouchableOpacity style={styles.logExerciseBtn}
+                                  onPress={() => openLogModal(day, date)}>
+                                  <Text style={styles.logExerciseBtnText}>+ Log now</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+
+                            {/* Sets/reps comparison bar */}
+                            {actualSets.length > 0 && (
+                              <View style={styles.complianceBarRow}>
+                                <View style={styles.complianceMiniBarBg}>
+                                  <View style={[styles.complianceMiniBarFill, {
+                                    width: `${Math.min(compliance.score, 100)}%`,
+                                    backgroundColor: compliance.color,
+                                  }]} />
+                                </View>
+                                <Text style={[styles.complianceMiniLabel,
+                                  { color: compliance.color }]}>
+                                  {compliance.score}%
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Extra logged exercises not in program */}
+                  {(() => {
+                    const programNames = new Set(uniqueProgramExercises.map(e => e.exercise_name));
+                    const extraExercises = Object.entries(loggedByExercise)
+                      .filter(([name]) => !programNames.has(name));
+                    if (extraExercises.length === 0) return null;
+                    return (
+                      <View style={styles.extraExercisesCard}>
+                        <Text style={styles.extraExercisesTitle}>
+                          ➕ Extra Exercises (not in program)
                         </Text>
-                      )}
+                        {extraExercises.map(([name, sets]) => {
+                          const maxW = Math.max(...sets.map(s => s.weight_kg || 0));
+                          return (
+                            <View key={name} style={styles.extraExRow}>
+                              <Text style={styles.extraExName}>{name}</Text>
+                              <View style={styles.actualSetsGrid}>
+                                {sets.map((s, si) => (
+                                  <View key={si} style={styles.actualSetChip}>
+                                    <Text style={styles.actualSetNum}>Set {s.set_number}</Text>
+                                    <Text style={styles.actualSetWeight}>
+                                      {s.weight_kg ? `${toDisplay(s.weight_kg, unit)}${ul}` : 'BW'}
+                                    </Text>
+                                    <Text style={styles.actualSetReps}>× {s.reps || '—'}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })()}
+
+                  {/* Rest day or no program */}
+                  {status.status === 'rest' && (
+                    <View style={styles.restDayRow}>
+                      <Text style={styles.restDayText}>😴 Rest & Recovery Day</Text>
                     </View>
-                    <View style={styles.setsRow}>
-                      {sets.map((s, si) => (
-                        <View key={si} style={styles.setChip}>
-                          <Text style={styles.setChipText}>
-                            Set {s.set_number}: {s.weight_kg ? `${toDisplay(s.weight_kg, unit)}${ul}` : 'BW'}
-                            {s.reps ? ` × ${s.reps}` : ''}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                );
-              })}
+                  )}
+
+                </View>
+              )}
             </View>
           );
         })}
 
       </ScrollView>
 
-      {/* Log Workout Modal */}
+      {/* ── LOG WORKOUT MODAL ──────────────────────────── */}
       <Modal visible={showLogModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>
-                📝 Log for {client.name}
-              </Text>
-              <Text style={styles.modalSubtitle}>
-                {logDay} — {logDate}
-              </Text>
+              <Text style={styles.modalTitle}>📝 Log for {client.name}</Text>
+              <Text style={styles.modalSubtitle}>{logDay} — {logDate}</Text>
 
-              {/* Session note */}
               <Text style={styles.modalLabel}>Session Note (optional)</Text>
               <RNTextInput value={logNote} onChangeText={setLogNote}
                 style={styles.modalNoteInput}
@@ -446,56 +671,63 @@ export default function ClientReportScreen({ route, navigation }) {
                 placeholderTextColor={COLORS.textMuted}
                 multiline />
 
-              {/* Exercises */}
               {logSets.map((ex, exIdx) => (
                 <View key={exIdx} style={styles.logExCard}>
                   <View style={styles.logExHeader}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.logExName}>{ex.exercise_name || 'Exercise'}</Text>
-                      <Text style={styles.logExMuscle}>{ex.muscle_group}</Text>
+                      <Text style={styles.logExPrescribed}>
+                        Prescribed: {ex.prescribed_sets} sets × {ex.prescribed_reps || '?'} reps
+                      </Text>
                     </View>
                     <TouchableOpacity onPress={() => removeExercise(exIdx)}>
                       <Text style={{ color: COLORS.error, fontSize: 16 }}>✕</Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Set header */}
-                  <View style={styles.setHeader}>
-                    <Text style={[styles.setHeaderText, { flex: 0.5 }]}>Set</Text>
-                    <Text style={[styles.setHeaderText, { flex: 2 }]}>Weight</Text>
-                    <Text style={[styles.setHeaderText, { flex: 0.8 }]}>Unit</Text>
-                    <Text style={[styles.setHeaderText, { flex: 1 }]}>Reps</Text>
-                    <Text style={[styles.setHeaderText, { flex: 0.5 }]}>✕</Text>
-                  </View>
-
                   {ex.entries.map((entry, setIdx) => (
-                    <View key={setIdx} style={styles.setRow}>
-                      <Text style={[styles.setNum, { flex: 0.5 }]}>{setIdx + 1}</Text>
-                      <RNTextInput
-                        value={entry.weight}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                        style={[styles.setInput, { flex: 2 }]}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
-                      <TouchableOpacity
-                        style={[styles.unitPicker, { flex: 0.8 }]}
-                        onPress={() => updateEntry(exIdx, setIdx, 'unit',
-                          entry.unit === 'kg' ? 'lbs' : 'kg')}>
-                        <Text style={styles.unitPickerText}>{entry.unit}</Text>
-                      </TouchableOpacity>
-                      <RNTextInput
-                        value={entry.reps}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                        style={[styles.setInput, { flex: 1 }]}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
-                      <TouchableOpacity
-                        style={{ flex: 0.5, alignItems: 'center' }}
-                        onPress={() => removeSet(exIdx, setIdx)}>
-                        <Text style={{ color: COLORS.error }}>✕</Text>
-                      </TouchableOpacity>
+                    <View key={setIdx} style={styles.setCard}>
+                      <View style={styles.setCardHeader}>
+                        <View style={styles.setNumBadge}>
+                          <Text style={styles.setNumText}>Set {setIdx + 1}</Text>
+                        </View>
+                        <View style={styles.setCardActions}>
+                          <TouchableOpacity
+                            style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                            onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                            <Text style={styles.prBtnText}>
+                              {entry.is_pb ? '🏆 PR' : '○ PR'}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.removeSetBtn}
+                            onPress={() => removeSet(exIdx, setIdx)}>
+                            <Text style={{ color: COLORS.error }}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <View style={styles.setCardInputs}>
+                        <View style={styles.inputGroup}>
+                          <Text style={styles.inputLabel}>Weight</Text>
+                          <RNTextInput value={entry.weight}
+                            onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                            style={styles.setInput} placeholder="0"
+                            placeholderTextColor={COLORS.textMuted}
+                            keyboardType="numeric" />
+                        </View>
+                        <TouchableOpacity style={styles.unitToggle}
+                          onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                            entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                          <Text style={styles.unitToggleText}>{entry.unit}</Text>
+                        </TouchableOpacity>
+                        <View style={styles.inputGroup}>
+                          <Text style={styles.inputLabel}>Reps</Text>
+                          <RNTextInput value={entry.reps}
+                            onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                            style={styles.setInput} placeholder="0"
+                            placeholderTextColor={COLORS.textMuted}
+                            keyboardType="numeric" />
+                        </View>
+                      </View>
                     </View>
                   ))}
 
@@ -506,13 +738,11 @@ export default function ClientReportScreen({ route, navigation }) {
                 </View>
               ))}
 
-              {/* Add exercise */}
               <TouchableOpacity style={styles.addExBtn}
                 onPress={() => setShowAddEx(true)}>
                 <Text style={styles.addExBtnText}>➕ Add Exercise</Text>
               </TouchableOpacity>
 
-              {/* Save / Cancel */}
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
                   onPress={() => setShowLogModal(false)}>
@@ -522,7 +752,7 @@ export default function ClientReportScreen({ route, navigation }) {
                   style={[styles.modalSaveBtn, savingLog && { opacity: 0.6 }]}
                   onPress={saveLog} disabled={savingLog}>
                   <Text style={styles.modalSaveText}>
-                    {savingLog ? 'Saving...' : '💾 Save Workout'}
+                    {savingLog ? 'Saving...' : '💾 Save'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -531,7 +761,7 @@ export default function ClientReportScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Add Exercise Modal */}
+      {/* ── ADD EXERCISE MODAL ─────────────────────────── */}
       <Modal visible={showAddEx} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -586,37 +816,75 @@ const styles = StyleSheet.create({
   weekBtnText: { color: COLORS.roseGold, ...FONTS.semibold, fontSize: SIZES.sm },
   weekLabel: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   weekDates: { color: COLORS.textMuted, fontSize: SIZES.xs, textAlign: 'center', marginBottom: 16 },
-  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   statCard: { flex: 1, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, alignItems: 'center', borderWidth: 1 },
   statValue: { fontSize: SIZES.xxl, ...FONTS.bold, color: COLORS.white },
   statLabel: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
+  complianceBarBg: { height: 8, backgroundColor: COLORS.darkCard2, borderRadius: 4, marginBottom: 4, overflow: 'hidden' },
+  complianceBarFill: { height: 8, borderRadius: 4 },
+  complianceBarLabel: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 16, textAlign: 'center' },
   noProgram: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 24, alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: COLORS.darkBorder },
   noProgramText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  noProgramLink: { color: COLORS.roseGold, fontSize: SIZES.sm, marginTop: 8, ...FONTS.semibold },
   sectionTitle: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
-  dayCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderLeftWidth: 4 },
-  dayHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
+  dayCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderLeftWidth: 4, overflow: 'hidden' },
+  dayHeader: { flexDirection: 'row', alignItems: 'flex-start', padding: 14 },
   dayTitleRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   dayName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   dayDate: { color: COLORS.textMuted, fontSize: SIZES.xs },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   statusEmoji: { fontSize: 14 },
   statusLabel: { fontSize: SIZES.sm, ...FONTS.medium },
-  statusNote: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 4, fontStyle: 'italic' },
-  logBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 6, marginLeft: 8 },
+  dayScoreBadge: { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1 },
+  dayScoreText: { fontSize: 10, ...FONTS.bold },
+  dayHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8 },
+  logBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 5 },
   logBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xs },
-  noteBox: { backgroundColor: '#60A5FA22', borderRadius: RADIUS.md, padding: 10, marginTop: 8, borderWidth: 1, borderColor: '#60A5FA44' },
+  expandIcon: { color: COLORS.textMuted, fontSize: 12 },
+  dayExpanded: { paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: 0.5, borderTopColor: COLORS.darkBorder },
+  noteBox: { backgroundColor: '#60A5FA22', borderRadius: RADIUS.md, padding: 10, marginTop: 10, marginBottom: 10, borderWidth: 1, borderColor: '#60A5FA44' },
   noteLabel: { color: '#60A5FA', fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 4 },
   noteText: { color: COLORS.white, fontSize: SIZES.sm, lineHeight: 18 },
-  exerciseList: { marginTop: 8, paddingTop: 8, borderTopWidth: 0.5, borderTopColor: COLORS.darkBorder },
-  exerciseItem: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 2 },
-  loggedExercise: { marginTop: 8, paddingTop: 8, borderTopWidth: 0.5, borderTopColor: COLORS.darkBorder },
-  loggedExHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' },
-  loggedExName: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.sm, flex: 1 },
+  prescribedHeader: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginTop: 10, marginBottom: 8 },
+  exerciseCompareCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  exCompareHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+  exNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  exCompareName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, flex: 1 },
+  exCompareMuscle: { color: COLORS.roseGold, fontSize: SIZES.xs },
   prBadge: { fontSize: SIZES.xs },
-  loggedMaxWeight: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.xs },
-  setsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  setChip: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: COLORS.darkBorder },
-  setChipText: { color: COLORS.textSecondary, fontSize: 10, ...FONTS.medium },
+  complianceBadge: { borderRadius: RADIUS.md, padding: 8, alignItems: 'center', borderWidth: 1, minWidth: 72 },
+  complianceBadgeEmoji: { fontSize: 16, marginBottom: 2 },
+  complianceBadgeScore: { fontSize: SIZES.lg, ...FONTS.heavy },
+  complianceBadgeLabel: { fontSize: 9, ...FONTS.semibold },
+  prescribedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  prescribedTag: { backgroundColor: '#60A5FA22', borderRadius: RADIUS.sm, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: '#60A5FA44' },
+  prescribedTagText: { color: '#60A5FA', fontSize: 9, ...FONTS.bold },
+  prescribedDetail: { color: COLORS.textSecondary, fontSize: SIZES.sm },
+  actualTag: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  actualTagText: { backgroundColor: COLORS.success + '22', borderRadius: RADIUS.sm, paddingHorizontal: 6, paddingVertical: 2, color: COLORS.success, fontSize: 9, ...FONTS.bold, borderWidth: 1, borderColor: COLORS.success + '44', overflow: 'hidden' },
+  actualBest: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
+  actualVolume: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  actualSetsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6 },
+  actualSetChip: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, minWidth: 80, alignItems: 'center' },
+  actualSetChipPR: { borderColor: '#FFE66D', backgroundColor: '#FFE66D11' },
+  actualSetNum: { color: COLORS.textMuted, fontSize: 9, marginBottom: 2 },
+  actualSetWeight: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.bold },
+  actualSetReps: { color: COLORS.textSecondary, fontSize: 10 },
+  prFlag: { fontSize: 10, marginTop: 2 },
+  notDoneRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
+  notDoneText: { color: COLORS.textMuted, fontSize: SIZES.sm, fontStyle: 'italic' },
+  logExerciseBtn: { borderWidth: 1, borderColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4 },
+  logExerciseBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
+  complianceBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  complianceMiniBarBg: { flex: 1, height: 4, backgroundColor: COLORS.darkCard, borderRadius: 2, overflow: 'hidden' },
+  complianceMiniBarFill: { height: 4, borderRadius: 2 },
+  complianceMiniLabel: { fontSize: 10, ...FONTS.bold, minWidth: 30, textAlign: 'right' },
+  extraExercisesCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginTop: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  extraExercisesTitle: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 8 },
+  extraExRow: { marginBottom: 8 },
+  extraExName: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.sm, marginBottom: 4 },
+  restDayRow: { alignItems: 'center', paddingVertical: 16 },
+  restDayText: { color: COLORS.textMuted, fontSize: SIZES.md },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, maxHeight: '92%' },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 4 },
@@ -625,19 +893,27 @@ const styles = StyleSheet.create({
   modalNoteInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
   modalInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.md, borderWidth: 1, borderColor: COLORS.darkBorder, marginBottom: 8 },
   logExCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: COLORS.darkBorder },
-  logExHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  logExHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
   logExName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
-  logExMuscle: { color: COLORS.roseGold, fontSize: SIZES.xs },
-  setHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  setHeaderText: { color: COLORS.textMuted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
-  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 4 },
-  setNum: { color: COLORS.textMuted, textAlign: 'center', fontSize: SIZES.sm },
-  setInput: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm, padding: 8, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', height: 38 },
-  unitPicker: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', height: 38, justifyContent: 'center' },
-  unitPickerText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
-  addSetBtn: { marginTop: 6, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
-  addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm },
-  addExBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  logExPrescribed: { color: COLORS.roseGold, fontSize: SIZES.xs, marginTop: 2 },
+  setCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
+  setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  setNumBadge: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  setNumText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  setCardActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  prBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, borderWidth: 1, borderColor: COLORS.darkBorder },
+  prBtnActive: { backgroundColor: COLORS.roseGoldMid, borderColor: COLORS.roseGold },
+  prBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
+  removeSetBtn: { padding: 4 },
+  setCardInputs: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
+  inputGroup: { flex: 1 },
+  inputLabel: { color: COLORS.textMuted, fontSize: 9, ...FONTS.semibold, textTransform: 'uppercase', marginBottom: 4 },
+  setInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 8, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 44 },
+  unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.sm, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 44, minWidth: 48 },
+  unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  addSetBtn: { marginTop: 6, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.sm },
+  addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs },
+  addExBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   addExBtnText: { color: COLORS.roseGold, ...FONTS.bold },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, marginRight: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
   chipActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
