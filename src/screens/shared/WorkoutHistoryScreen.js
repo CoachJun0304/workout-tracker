@@ -14,6 +14,7 @@ export default function WorkoutHistoryScreen({ route }) {
   const clientId = clientParam?.id || profile?.id;
   const ul = unitLabel(unit);
   const [logs, setLogs] = useState([]);
+  const [sessionNotes, setSessionNotes] = useState([]);
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(false);
 
@@ -38,18 +39,22 @@ export default function WorkoutHistoryScreen({ route }) {
   async function fetchLogs() {
     setLoading(true);
     const { start, end } = getWeekRange();
-    const { data } = await supabase
-      .from('workout_logs')
-      .select('*')
-      .eq('client_id', clientId)
-      .gte('logged_at', start)
-      .lte('logged_at', end + 'T23:59:59')
-      .order('logged_at', { ascending: false });
-    setLogs(data || []);
+    const [logsRes, notesRes] = await Promise.all([
+      supabase.from('workout_logs').select('*')
+        .eq('client_id', clientId)
+        .gte('logged_at', start)
+        .lte('logged_at', end + 'T23:59:59')
+        .order('logged_at', { ascending: false }),
+      supabase.from('session_notes').select('*')
+        .eq('client_id', clientId)
+        .gte('date', start)
+        .lte('date', end),
+    ]);
+    setLogs(logsRes.data || []);
+    setSessionNotes(notesRes.data || []);
     setLoading(false);
   }
 
-  // Group logs by date
   function groupByDate() {
     const groups = {};
     logs.forEach(log => {
@@ -60,7 +65,6 @@ export default function WorkoutHistoryScreen({ route }) {
     return groups;
   }
 
-  // Group by exercise within a date
   function groupByExercise(dateLogs) {
     const groups = {};
     dateLogs.forEach(log => {
@@ -96,8 +100,8 @@ export default function WorkoutHistoryScreen({ route }) {
         </TouchableOpacity>
       </View>
       <Text style={styles.weekDates}>
-        {new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} —{' '}
-        {new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        {new Date(start + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} —{' '}
+        {new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
       </Text>
 
       {/* Summary */}
@@ -134,6 +138,8 @@ export default function WorkoutHistoryScreen({ route }) {
           const exerciseGroups = groupByExercise(dateLogs);
           const dayName = new Date(date + 'T12:00:00').toLocaleDateString('en-US',
             { weekday: 'long', month: 'short', day: 'numeric' });
+          const note = sessionNotes.find(n => n.date === date);
+
           return (
             <View key={date} style={styles.dateCard}>
               <View style={styles.dateHeader}>
@@ -141,6 +147,15 @@ export default function WorkoutHistoryScreen({ route }) {
                 <Text style={styles.dateSets}>{dateLogs.length} sets</Text>
               </View>
 
+              {/* Session note */}
+              {note && (
+                <View style={styles.noteBox}>
+                  <Text style={styles.noteLabel}>📝 Session Note:</Text>
+                  <Text style={styles.noteText}>{note.note}</Text>
+                </View>
+              )}
+
+              {/* Exercises */}
               {Object.entries(exerciseGroups).map(([exercise, exLogs]) => {
                 const maxWeight = Math.max(...exLogs.map(l => l.weight_kg || 0));
                 const hasPR = exLogs.some(l => l.is_personal_best);
@@ -154,7 +169,6 @@ export default function WorkoutHistoryScreen({ route }) {
                       <Text style={styles.exerciseMuscle}>
                         {exLogs[0]?.muscle_group || ''}
                       </Text>
-                      {/* Sets breakdown */}
                       <View style={styles.setsRow}>
                         {exLogs.map((log, i) => (
                           <View key={i} style={styles.setChip}>
@@ -204,9 +218,12 @@ const styles = StyleSheet.create({
   emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 },
   dateCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
-  dateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 10, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
+  dateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingBottom: 10, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
   dateName: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.md },
   dateSets: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  noteBox: { backgroundColor: '#60A5FA22', borderRadius: RADIUS.md, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#60A5FA44' },
+  noteLabel: { color: '#60A5FA', fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 4 },
+  noteText: { color: COLORS.white, fontSize: SIZES.sm, lineHeight: 18 },
   exerciseRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
   exerciseNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   exerciseName: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.sm, flex: 1 },
