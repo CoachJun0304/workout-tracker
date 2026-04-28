@@ -17,14 +17,38 @@ const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
 const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
 
-// Phase weight/rep multipliers for cycle-based suggestions
+// Keyed by partial name match — compatible with all cycleData phase names
 const PHASE_MODIFIERS = {
-  'Menstrual Phase': { weightMult: 0.75, repsRange: '12-15', label: 'Low Intensity', color: '#FF6B6B', tip: 'Reduce weight 20-30%, higher reps' },
-  'Follicular Phase': { weightMult: 1.0, repsRange: null, label: 'Normal', color: '#4ECDC4', tip: 'Normal prescription, energy rising' },
-  'Ovulatory Phase': { weightMult: 1.05, repsRange: null, label: 'Peak Performance', color: '#FFE66D', tip: 'Peak window — try for PRs' },
-  'Luteal Phase (Early)': { weightMult: 0.95, repsRange: null, label: 'Slightly Reduced', color: '#FF9F43', tip: 'Slight reduction, maintain form' },
-  'Luteal Phase (Late)': { weightMult: 0.875, repsRange: '10-12', label: 'Moderate Reduction', color: '#FF7675', tip: 'Reduce weight 10-15%, focus on form' },
+  menstrual: {
+    weightMult: 0.75, repsRange: '12-15',
+    label: 'Low Intensity', color: '#FF6B6B',
+    tip: 'Reduce weight 20-30%, higher reps (12-15)',
+  },
+  follicular: {
+    weightMult: 1.0, repsRange: null,
+    label: 'Normal / Build', color: '#4ECDC4',
+    tip: 'Normal prescription — energy is rising',
+  },
+  ovulat: {
+    weightMult: 1.05, repsRange: null,
+    label: 'Peak Performance', color: '#FFE66D',
+    tip: 'Peak performance window — try for PRs',
+  },
+  luteal: {
+    weightMult: 0.875, repsRange: '10-12',
+    label: 'Moderate Reduction', color: '#FF9F43',
+    tip: 'Reduce weight 10-15%, focus on form',
+  },
 };
+
+function getPhaseModifier(phaseName) {
+  if (!phaseName) return null;
+  const n = phaseName.toLowerCase();
+  for (const [key, mod] of Object.entries(PHASE_MODIFIERS)) {
+    if (n.includes(key)) return mod;
+  }
+  return null;
+}
 
 export default function LogWorkoutScreen({ route, navigation }) {
   const { client } = route.params || {};
@@ -67,15 +91,19 @@ export default function LogWorkoutScreen({ route, navigation }) {
   }
 
   async function fetchCyclePhase() {
-    const { data } = await supabase
-      .from('menstrual_cycles')
-      .select('*')
-      .eq('client_id', client.id)
-      .order('cycle_start_date', { ascending: false })
-      .limit(1);
-    if (data && data.length > 0) {
-      const phase = getCurrentPhase(data[0].cycle_start_date, data[0].cycle_length);
-      setCyclePhase(phase);
+    try {
+      const { data } = await supabase
+        .from('menstrual_cycles')
+        .select('*')
+        .eq('client_id', client.id)
+        .order('cycle_start_date', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) {
+        const phase = getCurrentPhase(data[0].cycle_start_date, data[0].cycle_length);
+        setCyclePhase(phase);
+      }
+    } catch (e) {
+      console.log('cycle fetch error:', e.message);
     }
   }
 
@@ -105,7 +133,6 @@ export default function LogWorkoutScreen({ route, navigation }) {
         .order('logged_at', { ascending: false })
         .limit(10);
       if (data && data.length > 0) {
-        // Group by session date
         const byDate = {};
         data.forEach(log => {
           const date = log.logged_at?.split('T')[0];
@@ -145,62 +172,52 @@ export default function LogWorkoutScreen({ route, navigation }) {
     }
   }
 
-  // ── PROGRESSIVE OVERLOAD SUGGESTION ─────────────────
+  // ── PROGRESSIVE OVERLOAD ─────────────────────────────
 
   function getProgressionSuggestion(exerciseName, prescribed) {
     const prev = previousLogs[exerciseName];
     if (!prev || prev.length === 0) return null;
-
     const prescribedSets = parseInt(prescribed?.prescribed_sets) || 3;
     const prescribedRepsStr = prescribed?.prescribed_reps || '8';
     const prescribedReps = parseInt(prescribedRepsStr.split('-')[0]) || 8;
     const prescribedRepsMax = parseInt(prescribedRepsStr.split('-').pop()) || prescribedReps;
-
     const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
     const avgReps = prev.reduce((s, l) => s + (l.reps || 0), 0) / prev.length;
     const lastDate = prev[0]?.logged_at?.split('T')[0] || '';
-
     let suggestion = '';
     let suggestionColor = COLORS.success;
-
+    let actionType = '';
     if (avgReps >= prescribedRepsMax) {
-      // Exceeded max reps — add weight, reset to min reps
       const addWeight = unit === 'lbs' ? 5 : 2.5;
       const newWeight = toDisplay(maxWeight + addWeight, unit);
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul} on ${lastDate}\n→ Try: ${prescribedSets}×${prescribedReps} @ ${newWeight}${ul} (+${addWeight}${ul})`;
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add weight: try ${prescribedSets}×${prescribedReps} @ ${newWeight}${ul} (+${addWeight}${ul})`;
       suggestionColor = '#FFE66D';
+      actionType = 'weight';
     } else if (avgReps >= prescribedReps) {
-      // Hit prescribed reps — add 1 rep
       const newReps = Math.round(avgReps) + 1;
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul} on ${lastDate}\n→ Try: ${prescribedSets}×${newReps} @ ${toDisplay(maxWeight, unit)}${ul} (+1 rep)`;
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add rep: try ${prescribedSets}×${newReps} @ ${toDisplay(maxWeight, unit)}${ul} (+1 rep)`;
       suggestionColor = COLORS.success;
+      actionType = 'reps';
     } else {
-      // Missed reps — consolidate
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul} on ${lastDate}\n→ Try: ${prescribedSets}×${prescribedReps} @ ${toDisplay(maxWeight, unit)}${ul} (same — consolidate)`;
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Consolidate: try ${prescribedSets}×${prescribedReps} @ ${toDisplay(maxWeight, unit)}${ul}`;
       suggestionColor = '#FF9F43';
+      actionType = 'consolidate';
     }
-
-    return { suggestion, suggestionColor, maxWeight, avgReps, lastDate };
+    return { suggestion, suggestionColor, maxWeight, avgReps, lastDate, actionType };
   }
 
-  // ── CYCLE PHASE SUGGESTION PER EXERCISE ─────────────
+  // ── CYCLE SUGGESTION PER EXERCISE ────────────────────
 
   function getCycleSuggestion(exerciseName, prescribed) {
     if (!cyclePhase) return null;
+    const mod = getPhaseModifier(cyclePhase.name);
+    if (!mod) return null;
     const prev = previousLogs[exerciseName];
     if (!prev || prev.length === 0) return null;
-
-    const phaseName = cyclePhase.name;
-    const modifier = Object.entries(PHASE_MODIFIERS).find(([key]) =>
-      phaseName.toLowerCase().includes(key.toLowerCase().split(' ')[0])
-    );
-    if (!modifier) return null;
-
-    const [, mod] = modifier;
     const lastWeight = Math.max(...prev.map(l => l.weight_kg || 0));
+    if (lastWeight === 0) return null;
     const suggestedWeight = toDisplay(lastWeight * mod.weightMult, unit);
     const repsStr = mod.repsRange || prescribed?.prescribed_reps || '8-12';
-
     return {
       ...mod,
       exerciseName,
@@ -247,8 +264,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
     const newSet = {
       exercise_name: newEx.name.trim(),
       muscle_group: newEx.muscle_group,
-      prescribed_sets: 3,
-      prescribed_reps: '8-12',
+      prescribed_sets: 3, prescribed_reps: '8-12',
       entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }]
     };
     setSets(s => [...s, newSet]);
@@ -262,8 +278,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
       setSelectedDate(dateInput);
       const d = new Date(dateInput + 'T12:00:00');
       setSelectedMonth(MONTHS[d.getMonth()]);
-      const dayIdx = d.getDay();
-      const newDay = DAYS[dayIdx === 0 ? 6 : dayIdx - 1];
+      const newDay = DAYS[d.getDay() === 0 ? 6 : d.getDay() - 1];
       setSelectedDay(newDay);
       loadDayExercises(newDay, null);
     } else {
@@ -282,7 +297,6 @@ export default function LogWorkoutScreen({ route, navigation }) {
         .eq('exercise_name', ex.exercise_name)
         .order('weight_kg', { ascending: false }).limit(1);
       const currentPR = prData?.[0]?.weight_kg || 0;
-
       ex.entries.forEach((entry, setIdx) => {
         if (!entry.weight && !entry.reps) return;
         const weightKg = entry.weight ? toKg(parseFloat(entry.weight), entry.unit) : null;
@@ -304,10 +318,8 @@ export default function LogWorkoutScreen({ route, navigation }) {
         });
       });
     }
-
     if (!rows.length) { showAlert('No data', 'Enter at least one set'); return; }
     setLoading(true);
-
     if (sessionNote.trim()) {
       await supabase.from('session_notes').upsert({
         client_id: client.id,
@@ -315,17 +327,17 @@ export default function LogWorkoutScreen({ route, navigation }) {
         note: sessionNote.trim(),
       }, { onConflict: 'client_id,date' });
     }
-
     const { error } = await supabase.from('workout_logs').insert(rows);
     setLoading(false);
     if (error) { showAlert('Error', error.message); return; }
-
     const prs = rows.filter(r => r.is_personal_best).length;
     showAlert('✅ Workout Logged!',
       `${rows.length} sets saved for ${client.name} on ${selectedDate}!${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}`,
       [{ text: 'OK', onPress: () => navigation.goBack() }]
     );
   }
+
+  const phaseModifier = cyclePhase ? getPhaseModifier(cyclePhase.name) : null;
 
   return (
     <View style={styles.container}>
@@ -344,26 +356,21 @@ export default function LogWorkoutScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* ── CYCLE PHASE BANNER (female only) ─────────── */}
-        {cyclePhase && (
-          <View style={[styles.cycleBanner, {
-            borderColor: PHASE_MODIFIERS[cyclePhase.name]?.color || COLORS.roseGold
-          }]}>
+        {/* Cycle phase banner (female only) */}
+        {cyclePhase && phaseModifier && (
+          <View style={[styles.cycleBanner, { borderColor: phaseModifier.color }]}>
             <View style={styles.cycleBannerHeader}>
               <Text style={styles.cycleBannerEmoji}>{cyclePhase.emoji}</Text>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.cycleBannerPhase, {
-                  color: PHASE_MODIFIERS[cyclePhase.name]?.color || COLORS.roseGold
-                }]}>
+                <Text style={[styles.cycleBannerPhase, { color: phaseModifier.color }]}>
                   {cyclePhase.name} — Day {cyclePhase.dayInPhase}
                 </Text>
                 <Text style={styles.cycleBannerLabel}>
-                  {PHASE_MODIFIERS[cyclePhase.name]?.label || 'Check phase'} · {PHASE_MODIFIERS[cyclePhase.name]?.tip}
+                  {phaseModifier.label} · {phaseModifier.tip}
                 </Text>
               </View>
             </View>
 
-            {/* Per-exercise cycle suggestions */}
             {sets.filter(ex => ex.exercise_name).length > 0 && (
               <View style={styles.cycleSuggestionsBox}>
                 <Text style={styles.cycleSuggestionsTitle}>
@@ -397,15 +404,11 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
         {/* Day selector */}
         <Text style={styles.sectionLabel}>Day</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}
-          style={styles.chipScroll}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
           {DAYS.map(d => (
             <TouchableOpacity key={d}
               style={[styles.chip, selectedDay === d && styles.chipActive]}
-              onPress={() => {
-                setSelectedDay(d);
-                loadDayExercises(d, null);
-              }}>
+              onPress={() => { setSelectedDay(d); loadDayExercises(d, null); }}>
               <Text style={[styles.chipText, selectedDay === d && styles.chipTextActive]}>
                 {d.slice(0, 3)}
               </Text>
@@ -425,7 +428,6 @@ export default function LogWorkoutScreen({ route, navigation }) {
         <Text style={styles.sectionLabel}>Exercises</Text>
         {sets.map((ex, exIdx) => {
           const progression = getProgressionSuggestion(ex.exercise_name, ex);
-
           return (
             <View key={exIdx} style={styles.exerciseCard}>
               <View style={styles.exHeader}>
@@ -444,7 +446,17 @@ export default function LogWorkoutScreen({ route, navigation }) {
               {/* Progressive overload suggestion */}
               {progression && (
                 <View style={[styles.progressionCard, { borderColor: progression.suggestionColor }]}>
-                  <Text style={styles.progressionTitle}>📈 Progressive Overload Guide</Text>
+                  <View style={styles.progressionHeader}>
+                    <Text style={styles.progressionIcon}>
+                      {progression.actionType === 'weight' ? '⬆️'
+                        : progression.actionType === 'reps' ? '➕' : '🔄'}
+                    </Text>
+                    <Text style={styles.progressionTitle}>
+                      {progression.actionType === 'weight' ? 'Time to add weight!'
+                        : progression.actionType === 'reps' ? 'Add a rep today!'
+                        : 'Consolidate — same weight'}
+                    </Text>
+                  </View>
                   <Text style={[styles.progressionText, { color: progression.suggestionColor }]}>
                     {progression.suggestion}
                   </Text>
@@ -475,13 +487,10 @@ export default function LogWorkoutScreen({ route, navigation }) {
                   <View style={styles.setCardInputs}>
                     <View style={styles.inputGroup}>
                       <Text style={styles.inputGroupLabel}>Weight</Text>
-                      <RNTextInput
-                        value={entry.weight}
+                      <RNTextInput value={entry.weight}
                         onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                        style={styles.inputGroupField}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
+                        style={styles.inputGroupField} placeholder="0"
+                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
                     </View>
                     <TouchableOpacity style={styles.unitToggle}
                       onPress={() => updateEntry(exIdx, setIdx, 'unit',
@@ -490,13 +499,10 @@ export default function LogWorkoutScreen({ route, navigation }) {
                     </TouchableOpacity>
                     <View style={styles.inputGroup}>
                       <Text style={styles.inputGroupLabel}>Reps</Text>
-                      <RNTextInput
-                        value={entry.reps}
+                      <RNTextInput value={entry.reps}
                         onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                        style={styles.inputGroupField}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
+                        style={styles.inputGroupField} placeholder="0"
+                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
                     </View>
                   </View>
                 </View>
@@ -530,8 +536,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
             <Text style={styles.modalTitle}>📅 Select Date</Text>
             <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
             <RNTextInput value={dateInput} onChangeText={setDateInput}
-              style={styles.modalInput}
-              placeholder="e.g. 2026-04-15"
+              style={styles.modalInput} placeholder="e.g. 2026-04-15"
               placeholderTextColor={COLORS.textMuted} />
             <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 12 }}>
               You can log workouts for any past date
@@ -557,8 +562,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
             <Text style={styles.modalLabel}>Exercise Name</Text>
             <RNTextInput value={newEx.name}
               onChangeText={v => setNewEx(e => ({ ...e, name: v }))}
-              style={styles.modalInput}
-              placeholder="e.g. Barbell Bench Press"
+              style={styles.modalInput} placeholder="e.g. Barbell Bench Press"
               placeholderTextColor={COLORS.textMuted} />
             <Text style={styles.modalLabel}>Muscle Group</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}
@@ -624,7 +628,9 @@ const styles = StyleSheet.create({
   muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.sm, marginTop: 2 },
   prescribedText: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   progressionCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, marginBottom: 10, borderWidth: 1, borderLeftWidth: 3 },
-  progressionTitle: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 4 },
+  progressionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  progressionIcon: { fontSize: 14 },
+  progressionTitle: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold },
   progressionText: { fontSize: SIZES.xs, lineHeight: 18 },
   setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
   setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
