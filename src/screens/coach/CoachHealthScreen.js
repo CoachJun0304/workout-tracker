@@ -16,16 +16,25 @@ const MEAL_TYPES = ['Breakfast','Lunch','Dinner','Snack','Pre-workout','Post-wor
 const FOOD_CATEGORIES = ['Meat & Poultry','Fish & Seafood','Dairy','Eggs','Grains & Cereals',
   'Fruits','Vegetables','Legumes','Nuts & Seeds','Oils & Fats','Sweets','Beverages',
   'Fast Food','Supplements','Other'];
+const ACTIVITY_MULTIPLIERS = {
+  sedentary: { label: 'Sedentary', desc: 'Little or no exercise', mult: 1.2 },
+  light: { label: 'Lightly Active', desc: '1-3 days/week', mult: 1.375 },
+  moderate: { label: 'Moderately Active', desc: '3-5 days/week', mult: 1.55 },
+  active: { label: 'Very Active', desc: '6-7 days/week', mult: 1.725 },
+  extra: { label: 'Extremely Active', desc: 'Physical job + exercise', mult: 1.9 },
+};
+const GOAL_DEFAULTS = {
+  cutting: { proteinPct: 40, carbsPct: 35, fatsPct: 25 },
+  maintenance: { proteinPct: 30, carbsPct: 45, fatsPct: 25 },
+  bulking: { proteinPct: 30, carbsPct: 50, fatsPct: 20 },
+};
 
 export default function CoachHealthScreen({ route }) {
   const { client } = route.params || {};
   const { profile } = useAuth();
   const todayStr = new Date().toISOString().split('T')[0];
 
-  // Tab state
   const [tab, setTab] = useState('weight');
-
-  // Data
   const [weightLogs, setWeightLogs] = useState([]);
   const [macroTargets, setMacroTargets] = useState(null);
   const [macroLogs, setMacroLogs] = useState([]);
@@ -33,6 +42,7 @@ export default function CoachHealthScreen({ route }) {
   const [cycles, setCycles] = useState([]);
   const [foodEntries, setFoodEntries] = useState([]);
   const [foodLibrary, setFoodLibrary] = useState([]);
+  const [mealPlanTemplates, setMealPlanTemplates] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedCalDate, setSelectedCalDate] = useState(todayStr);
   const [loading, setLoading] = useState(false);
@@ -70,35 +80,69 @@ export default function CoachHealthScreen({ route }) {
     calories_per_100g: '', fiber_g: '', sugar_g: '',
   });
 
+  // Meal plan modals
+  const [showMealPlanModal, setShowMealPlanModal] = useState(false);
+  const [showApplyPlanModal, setShowApplyPlanModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [planName, setPlanName] = useState('');
+  const [planGoal, setPlanGoal] = useState('');
+  const [planDesc, setPlanDesc] = useState('');
+  const [planIsShared, setPlanIsShared] = useState(false);
+  const [planItems, setPlanItems] = useState([]);
+  const [planItemSearch, setPlanItemSearch] = useState('');
+  const [planItemMeal, setPlanItemMeal] = useState('Breakfast');
+  const [planItemGrams, setPlanItemGrams] = useState('100');
+  const [planItemFood, setPlanItemFood] = useState(null);
+  const [planItemStep, setPlanItemStep] = useState('list');
+  const [applyPlanTarget, setApplyPlanTarget] = useState(null);
+  const [applyPlanDate, setApplyPlanDate] = useState(todayStr);
+  const [applyPlanReplace, setApplyPlanReplace] = useState(false);
+  const [expandedPlanId, setExpandedPlanId] = useState(null);
+
+  // TDEE state
+  const [tdeeWeight, setTdeeWeight] = useState(client?.weight_kg ? String(client.weight_kg) : '');
+  const [tdeeHeight, setTdeeHeight] = useState(client?.height_cm ? String(client.height_cm) : '');
+  const [tdeeAge, setTdeeAge] = useState(client?.age ? String(client.age) : '');
+  const [tdeeGender, setTdeeGender] = useState(client?.gender || 'Male');
+  const [tdeeActivity, setTdeeActivity] = useState('moderate');
+  const [tdeeGoal, setTdeeGoal] = useState('maintenance');
+  const [tdeeDeficit, setTdeeDeficit] = useState('500');
+  const [tdeeSurplus, setTdeeSurplus] = useState('300');
+  const [tdeeProteinPct, setTdeeProteinPct] = useState(30);
+  const [tdeeCarbsPct, setTdeeCarbsPct] = useState(45);
+  const [tdeeFatsPct, setTdeeFatsPct] = useState(25);
+  const [tdeeMacroMode, setTdeeMacroMode] = useState('percent');
+  const [tdeeProteinG, setTdeeProteinG] = useState('');
+  const [tdeeCarbsG, setTdeeCarbsG] = useState('');
+  const [tdeeFatsG, setTdeeFatsG] = useState('');
+  const [tdeeResult, setTdeeResult] = useState(null);
+
   const clientUnit = client?.unit_preference || 'kg';
   const ul = unitLabel(clientUnit);
   const isFemale = client?.gender === 'Female';
 
-  useEffect(() => {
-    if (client?.id) fetchAll();
-  }, []);
+  useEffect(() => { if (client?.id) fetchAll(); }, []);
 
   async function fetchAll() {
     try {
-      const [wRes, mRes, tRes, fRes, cRes, feRes, flRes] = await Promise.all([
+      const [wRes, mRes, tRes, fRes, cRes, feRes, flRes, mpRes] = await Promise.all([
         supabase.from('weight_logs').select('*')
-          .eq('client_id', client.id)
-          .order('logged_at', { ascending: false }),
+          .eq('client_id', client.id).order('logged_at', { ascending: false }),
         supabase.from('macro_logs').select('*')
-          .eq('client_id', client.id)
-          .order('date', { ascending: false }).limit(30),
+          .eq('client_id', client.id).order('date', { ascending: false }).limit(30),
         supabase.from('macro_targets').select('*')
           .eq('client_id', client.id).single(),
         supabase.from('workout_feedback').select('*')
-          .eq('client_id', client.id)
-          .order('created_at', { ascending: false }),
+          .eq('client_id', client.id).order('created_at', { ascending: false }),
         supabase.from('menstrual_cycles').select('*')
-          .eq('client_id', client.id)
-          .order('cycle_start_date', { ascending: false }),
+          .eq('client_id', client.id).order('cycle_start_date', { ascending: false }),
         supabase.from('food_entries').select('*')
-          .eq('client_id', client.id)
-          .order('created_at', { ascending: false }),
+          .eq('client_id', client.id).order('created_at', { ascending: false }),
         supabase.from('food_library').select('*').order('name'),
+        supabase.from('meal_plan_templates')
+          .select('*, meal_plan_items(*)')
+          .or(`client_id.eq.${client.id},is_shared.eq.true,created_by.eq.${profile.id}`)
+          .order('created_at', { ascending: false }),
       ]);
       setWeightLogs(wRes.data || []);
       setMacroLogs(mRes.data || []);
@@ -107,6 +151,7 @@ export default function CoachHealthScreen({ route }) {
       setCycles(cRes.data || []);
       setFoodEntries(feRes.data || []);
       setFoodLibrary(flRes.data || []);
+      setMealPlanTemplates(mpRes.data || []);
       if (tRes.data) {
         setTargetInput({
           protein: String(tRes.data.protein_g),
@@ -199,6 +244,11 @@ export default function CoachHealthScreen({ route }) {
     (f.brand || '').toLowerCase().includes(foodSearch.toLowerCase())
   );
 
+  const filteredPlanFoods = foodLibrary.filter(f =>
+    f.name.toLowerCase().includes(planItemSearch.toLowerCase()) ||
+    (f.brand || '').toLowerCase().includes(planItemSearch.toLowerCase())
+  );
+
   function calcFoodMacros(food, grams) {
     const g = parseFloat(grams) || 0;
     return {
@@ -236,27 +286,21 @@ export default function CoachHealthScreen({ route }) {
     });
     setShowAddFoodLibModal(false);
     fetchAll();
-    if (data) { setSelectedFood(data); setFoodInputMode('search'); }
+    if (data) setSelectedFood(data);
   }
 
   async function saveFoodEntry() {
     setLoading(true);
     let entryData = null;
-
     if (foodInputMode === 'search' && selectedFood) {
       const macros = calcFoodMacros(selectedFood, foodGrams);
       entryData = {
-        client_id: client.id,
-        date: foodDate,
-        food_name: selectedFood.name,
-        brand: selectedFood.brand || null,
+        client_id: client.id, date: foodDate,
+        food_name: selectedFood.name, brand: selectedFood.brand || null,
         grams: parseFloat(foodGrams),
-        protein_g: macros.protein,
-        carbs_g: macros.carbs,
-        fats_g: macros.fats,
-        calories: macros.calories,
-        meal_type: foodMeal,
-        food_library_id: selectedFood.id,
+        protein_g: macros.protein, carbs_g: macros.carbs,
+        fats_g: macros.fats, calories: macros.calories,
+        meal_type: foodMeal, food_library_id: selectedFood.id,
         serving_size_g: selectedFood.serving_size_g || 100,
       };
     } else if (foodInputMode === 'custom' && customFood.name) {
@@ -264,44 +308,17 @@ export default function CoachHealthScreen({ route }) {
       const protein = parseFloat(customFood.protein) || 0;
       const carbs = parseFloat(customFood.carbs) || 0;
       const fats = parseFloat(customFood.fats) || 0;
-      const cals = +(protein * 4 + carbs * 4 + fats * 9).toFixed(0);
       entryData = {
-        client_id: client.id,
-        date: foodDate,
-        food_name: customFood.name.trim(),
-        brand: customFood.brand.trim() || null,
-        grams: g,
-        protein_g: protein,
-        carbs_g: carbs,
-        fats_g: fats,
-        calories: cals,
-        meal_type: foodMeal,
-        serving_size_g: g,
+        client_id: client.id, date: foodDate,
+        food_name: customFood.name.trim(), brand: customFood.brand.trim() || null,
+        grams: g, protein_g: protein, carbs_g: carbs, fats_g: fats,
+        calories: +(protein * 4 + carbs * 4 + fats * 9).toFixed(0),
+        meal_type: foodMeal, serving_size_g: g,
       };
     }
-
     if (!entryData) { setLoading(false); return; }
     await supabase.from('food_entries').insert(entryData);
-
-    // Recalculate macro_logs for this date
-    const dayEntries = [...foodEntries.filter(e => e.date === foodDate), entryData];
-    const totals = dayEntries.reduce((acc, e) => ({
-      protein: acc.protein + (e.protein_g || 0),
-      carbs: acc.carbs + (e.carbs_g || 0),
-      fats: acc.fats + (e.fats_g || 0),
-      calories: acc.calories + (e.calories || 0),
-    }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
-
-    await supabase.from('macro_logs').upsert({
-      client_id: client.id,
-      logged_by: profile.id,
-      date: foodDate,
-      protein_g: +totals.protein.toFixed(1),
-      carbs_g: +totals.carbs.toFixed(1),
-      fats_g: +totals.fats.toFixed(1),
-      calories: +totals.calories.toFixed(0),
-    }, { onConflict: 'client_id,date' });
-
+    await recalcMacroLog(foodDate, [...foodEntries.filter(e => e.date === foodDate), entryData]);
     setLoading(false);
     setShowFoodModal(false);
     setSelectedFood(null); setFoodGrams(''); setFoodSearch('');
@@ -313,27 +330,275 @@ export default function CoachHealthScreen({ route }) {
     showConfirm('Delete', 'Remove this food entry?', async () => {
       await supabase.from('food_entries').delete().eq('id', id);
       const remaining = foodEntries.filter(e => e.id !== id && e.date === date);
-      const totals = remaining.reduce((acc, e) => ({
-        protein: acc.protein + (e.protein_g || 0),
-        carbs: acc.carbs + (e.carbs_g || 0),
-        fats: acc.fats + (e.fats_g || 0),
-        calories: acc.calories + (e.calories || 0),
-      }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
-      if (remaining.length === 0) {
-        await supabase.from('macro_logs').delete()
-          .eq('client_id', client.id).eq('date', date);
-      } else {
-        await supabase.from('macro_logs').upsert({
-          client_id: client.id, date,
-          protein_g: totals.protein, carbs_g: totals.carbs,
-          fats_g: totals.fats, calories: totals.calories,
-        }, { onConflict: 'client_id,date' });
-      }
+      await recalcMacroLog(date, remaining);
       fetchAll();
     }, null, 'Delete', true);
   }
 
-  // ── CALENDAR HELPERS ──────────────────────────────────
+  async function recalcMacroLog(date, entries) {
+    if (entries.length === 0) {
+      await supabase.from('macro_logs').delete()
+        .eq('client_id', client.id).eq('date', date);
+      return;
+    }
+    const totals = entries.reduce((acc, e) => ({
+      protein: acc.protein + (e.protein_g || 0),
+      carbs: acc.carbs + (e.carbs_g || 0),
+      fats: acc.fats + (e.fats_g || 0),
+      calories: acc.calories + (e.calories || 0),
+    }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
+    await supabase.from('macro_logs').upsert({
+      client_id: client.id, logged_by: profile.id, date,
+      protein_g: +totals.protein.toFixed(1),
+      carbs_g: +totals.carbs.toFixed(1),
+      fats_g: +totals.fats.toFixed(1),
+      calories: +totals.calories.toFixed(0),
+    }, { onConflict: 'client_id,date' });
+  }
+
+  // ── MEAL PLANS ────────────────────────────────────────
+
+  function openNewPlan() {
+    setEditingPlan(null);
+    setPlanName('');
+    setPlanGoal('');
+    setPlanDesc('');
+    setPlanIsShared(false);
+    setPlanItems([]);
+    setPlanItemStep('list');
+    setShowMealPlanModal(true);
+  }
+
+  function openEditPlan(plan) {
+    setEditingPlan(plan);
+    setPlanName(plan.name);
+    setPlanGoal(plan.goal || '');
+    setPlanDesc(plan.description || '');
+    setPlanIsShared(plan.is_shared || false);
+    setPlanItems(plan.meal_plan_items || []);
+    setPlanItemStep('list');
+    setShowMealPlanModal(true);
+  }
+
+  function addItemToPlan() {
+    if (!planItemFood) { showAlert('Error', 'Select a food first'); return; }
+    const macros = calcFoodMacros(planItemFood, planItemGrams);
+    const newItem = {
+      meal_type: planItemMeal,
+      food_name: planItemFood.name,
+      brand: planItemFood.brand || null,
+      food_library_id: planItemFood.id,
+      grams: parseFloat(planItemGrams),
+      protein_g: macros.protein,
+      carbs_g: macros.carbs,
+      fats_g: macros.fats,
+      calories: macros.calories,
+      order_index: planItems.length,
+    };
+    setPlanItems(p => [...p, newItem]);
+    setPlanItemFood(null);
+    setPlanItemGrams('100');
+    setPlanItemSearch('');
+    setPlanItemStep('list');
+  }
+
+  function removeItemFromPlan(idx) {
+    setPlanItems(p => p.filter((_, i) => i !== idx));
+  }
+
+  async function saveMealPlan() {
+    if (!planName.trim()) { showAlert('Error', 'Plan name required'); return; }
+    if (planItems.length === 0) { showAlert('Error', 'Add at least one food item'); return; }
+    setLoading(true);
+
+    const totals = planItems.reduce((acc, e) => ({
+      protein: acc.protein + (e.protein_g || 0),
+      carbs: acc.carbs + (e.carbs_g || 0),
+      fats: acc.fats + (e.fats_g || 0),
+      calories: acc.calories + (e.calories || 0),
+    }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
+
+    let planId;
+    if (editingPlan) {
+      await supabase.from('meal_plan_templates').update({
+        name: planName.trim(),
+        description: planDesc.trim() || null,
+        goal: planGoal || null,
+        is_shared: planIsShared,
+        total_calories: totals.calories,
+        total_protein_g: totals.protein,
+        total_carbs_g: totals.carbs,
+        total_fats_g: totals.fats,
+      }).eq('id', editingPlan.id);
+      await supabase.from('meal_plan_items').delete().eq('template_id', editingPlan.id);
+      planId = editingPlan.id;
+    } else {
+      const { data } = await supabase.from('meal_plan_templates').insert({
+        name: planName.trim(),
+        description: planDesc.trim() || null,
+        goal: planGoal || null,
+        is_shared: planIsShared,
+        client_id: client.id,
+        created_by: profile.id,
+        total_calories: totals.calories,
+        total_protein_g: totals.protein,
+        total_carbs_g: totals.carbs,
+        total_fats_g: totals.fats,
+      }).select().single();
+      planId = data?.id;
+    }
+
+    if (planId) {
+      await supabase.from('meal_plan_items').insert(
+        planItems.map((item, i) => ({ ...item, template_id: planId, order_index: i }))
+      );
+    }
+
+    setLoading(false);
+    setShowMealPlanModal(false);
+    showAlert('✅ Meal Plan Saved!', `"${planName}" has been saved.`);
+    fetchAll();
+  }
+
+  async function deleteMealPlan(plan) {
+    showConfirm('Delete Meal Plan',
+      `Delete "${plan.name}"? This cannot be undone.`,
+      async () => {
+        await supabase.from('meal_plan_items').delete().eq('template_id', plan.id);
+        await supabase.from('meal_plan_templates').delete().eq('id', plan.id);
+        fetchAll();
+      }, null, 'Delete', true);
+  }
+
+  async function applyMealPlan() {
+    if (!applyPlanTarget) return;
+    setLoading(true);
+
+    const items = applyPlanTarget.meal_plan_items || [];
+    if (applyPlanReplace) {
+      const existingIds = foodEntries.filter(e => e.date === applyPlanDate).map(e => e.id);
+      if (existingIds.length > 0) {
+        await supabase.from('food_entries').delete().in('id', existingIds);
+      }
+    }
+
+    const newEntries = items.map(item => ({
+      client_id: client.id,
+      date: applyPlanDate,
+      food_name: item.food_name,
+      brand: item.brand || null,
+      food_library_id: item.food_library_id || null,
+      grams: item.grams,
+      protein_g: item.protein_g,
+      carbs_g: item.carbs_g,
+      fats_g: item.fats_g,
+      calories: item.calories,
+      meal_type: item.meal_type,
+    }));
+
+    await supabase.from('food_entries').insert(newEntries);
+
+    const existing = applyPlanReplace
+      ? []
+      : foodEntries.filter(e => e.date === applyPlanDate);
+    await recalcMacroLog(applyPlanDate, [...existing, ...newEntries]);
+
+    setLoading(false);
+    setShowApplyPlanModal(false);
+    showAlert('✅ Meal Plan Applied!',
+      `"${applyPlanTarget.name}" applied to ${applyPlanDate} for ${client.name}.`);
+    fetchAll();
+  }
+
+  // ── TDEE ─────────────────────────────────────────────
+
+  function calculateTDEE() {
+    const w = parseFloat(tdeeWeight);
+    const h = parseFloat(tdeeHeight);
+    const a = parseFloat(tdeeAge);
+    if (!w || !h || !a) { showAlert('Error', 'Enter weight, height and age'); return; }
+    let bmr = tdeeGender === 'Male'
+      ? 10 * w + 6.25 * h - 5 * a + 5
+      : 10 * w + 6.25 * h - 5 * a - 161;
+    const mult = ACTIVITY_MULTIPLIERS[tdeeActivity]?.mult || 1.55;
+    const tdee = bmr * mult;
+    let targetCals = tdeeGoal === 'cutting'
+      ? tdee - (parseFloat(tdeeDeficit) || 500)
+      : tdeeGoal === 'bulking'
+      ? tdee + (parseFloat(tdeeSurplus) || 300)
+      : tdee;
+    const defaults = GOAL_DEFAULTS[tdeeGoal];
+    setTdeeProteinPct(defaults.proteinPct);
+    setTdeeCarbsPct(defaults.carbsPct);
+    setTdeeFatsPct(defaults.fatsPct);
+    setTdeeProteinG(((defaults.proteinPct / 100) * targetCals / 4).toFixed(0));
+    setTdeeCarbsG(((defaults.carbsPct / 100) * targetCals / 4).toFixed(0));
+    setTdeeFatsG(((defaults.fatsPct / 100) * targetCals / 9).toFixed(0));
+    setTdeeResult({ bmr: Math.round(bmr), tdee: Math.round(tdee), targetCals: Math.round(targetCals) });
+  }
+
+  function getTdeeTargetCals() {
+    if (tdeeMacroMode === 'grams') {
+      return (parseFloat(tdeeProteinG) || 0) * 4 +
+             (parseFloat(tdeeCarbsG) || 0) * 4 +
+             (parseFloat(tdeeFatsG) || 0) * 9;
+    }
+    return tdeeResult?.targetCals || 0;
+  }
+
+  function updateMacroPercent(macro, value) {
+    const val = Math.min(100, Math.max(0, parseInt(value) || 0));
+    if (macro === 'protein') {
+      setTdeeProteinPct(val);
+      const rem = 100 - val;
+      const cRatio = tdeeCarbsPct + tdeeFatsPct > 0
+        ? tdeeCarbsPct / (tdeeCarbsPct + tdeeFatsPct) : 0.64;
+      setTdeeCarbsPct(Math.round(rem * cRatio));
+      setTdeeFatsPct(Math.max(0, rem - Math.round(rem * cRatio)));
+    } else if (macro === 'carbs') {
+      setTdeeCarbsPct(val);
+      setTdeeFatsPct(Math.max(0, 100 - tdeeProteinPct - val));
+    } else {
+      setTdeeFatsPct(val);
+      setTdeeCarbsPct(Math.max(0, 100 - tdeeProteinPct - val));
+    }
+  }
+
+  function getMacrosFromPercents() {
+    if (!tdeeResult) return { p: 0, c: 0, f: 0 };
+    const cals = tdeeResult.targetCals;
+    return {
+      p: Math.round((tdeeProteinPct / 100) * cals / 4),
+      c: Math.round((tdeeCarbsPct / 100) * cals / 4),
+      f: Math.round((tdeeFatsPct / 100) * cals / 9),
+    };
+  }
+
+  async function applyTdeeAsTargets() {
+    let protein, carbs, fats, calories;
+    if (tdeeMacroMode === 'percent') {
+      const m = getMacrosFromPercents();
+      protein = m.p; carbs = m.c; fats = m.f;
+      calories = tdeeResult?.targetCals || 0;
+    } else {
+      protein = parseFloat(tdeeProteinG) || 0;
+      carbs = parseFloat(tdeeCarbsG) || 0;
+      fats = parseFloat(tdeeFatsG) || 0;
+      calories = Math.round(protein * 4 + carbs * 4 + fats * 9);
+    }
+    setLoading(true);
+    await supabase.from('macro_targets').upsert({
+      client_id: client.id, protein_g: protein, carbs_g: carbs,
+      fats_g: fats, calories, set_by: profile.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'client_id' });
+    setLoading(false);
+    showAlert('✅ Targets Applied!',
+      `P:${protein}g C:${carbs}g F:${fats}g (${calories}kcal) set for ${client.name}`);
+    fetchAll();
+  }
+
+  // ── CALENDAR ─────────────────────────────────────────
 
   function getCalendarCells() {
     const year = calendarMonth.getFullYear();
@@ -363,8 +628,8 @@ export default function CoachHealthScreen({ route }) {
   const todayMacroLog = macroLogs.find(l => l.date === selectedCalDate);
   const selectedFoodEntries = foodEntries.filter(e => e.date === selectedCalDate);
   const monthName = calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
-  const tabs = ['weight', 'macros', 'food', 'feedback', ...(isFemale ? ['cycle'] : [])];
-  const tabLabels = ['⚖️ Weight', '🥗 Macros', '🍽️ Food Log', '💬 Feedback', ...(isFemale ? ['🌸 Cycle'] : [])];
+  const tabs = ['weight', 'macros', 'food', 'mealplans', 'tdee', 'feedback', ...(isFemale ? ['cycle'] : [])];
+  const tabLabels = ['⚖️ Weight', '🥗 Macros', '🍽️ Food Log', '📋 Meal Plans', '🔢 TDEE', '💬 Feedback', ...(isFemale ? ['🌸 Cycle'] : [])];
 
   return (
     <View style={styles.container}>
@@ -401,15 +666,12 @@ export default function CoachHealthScreen({ route }) {
           <View>
             <TouchableOpacity style={styles.actionBtn}
               onPress={() => {
-                setEditingWeight(null);
-                setWeightInput('');
-                setWeightNotes('');
-                setWeightDate(todayStr);
+                setEditingWeight(null); setWeightInput('');
+                setWeightNotes(''); setWeightDate(todayStr);
                 setShowWeightModal(true);
               }}>
               <Text style={styles.actionBtnText}>+ Log Weigh-in for {client.name}</Text>
             </TouchableOpacity>
-
             {weightLogs.length === 0
               ? <View style={styles.empty}><Text style={styles.emptyText}>No weight logs yet</Text></View>
               : weightLogs.map((log, i) => {
@@ -485,14 +747,12 @@ export default function CoachHealthScreen({ route }) {
                 <Text style={styles.emptyText}>No macro targets set</Text>
               </View>
             )}
-
             <TouchableOpacity style={styles.actionBtn}
               onPress={() => setShowTargetModal(true)}>
               <Text style={styles.actionBtnText}>
                 {macroTargets ? '✏️ Edit Macro Targets' : '+ Set Macro Targets'}
               </Text>
             </TouchableOpacity>
-
             <Text style={styles.sectionTitle}>Recent Macro Logs</Text>
             {macroLogs.length === 0
               ? <View style={styles.empty}><Text style={styles.emptyText}>No macro logs yet</Text></View>
@@ -522,60 +782,44 @@ export default function CoachHealthScreen({ route }) {
         {/* ═══ FOOD LOG TAB ═══ */}
         {tab === 'food' && (
           <View>
-            {/* Date selector */}
             <View style={styles.foodDateRow}>
-              <Text style={styles.foodDateLabel}>Logging for:</Text>
-              <RNTextInput
-                value={foodDate}
-                onChangeText={setFoodDate}
-                style={styles.foodDateInput}
-                placeholder="YYYY-MM-DD"
+              <Text style={styles.foodDateLabel}>Date:</Text>
+              <RNTextInput value={foodDate} onChangeText={setFoodDate}
+                style={styles.foodDateInput} placeholder="YYYY-MM-DD"
                 placeholderTextColor={COLORS.textMuted} />
             </View>
-
             <TouchableOpacity style={styles.actionBtn}
               onPress={() => {
-                setFoodInputMode('search');
-                setSelectedFood(null);
-                setFoodSearch('');
-                setFoodGrams('');
+                setFoodInputMode('search'); setSelectedFood(null);
+                setFoodSearch(''); setFoodGrams('');
                 setCustomFood({ name: '', brand: '', protein: '', carbs: '', fats: '', grams: '100' });
                 setShowFoodModal(true);
               }}>
               <Text style={styles.actionBtnText}>+ Log Food for {client.name}</Text>
             </TouchableOpacity>
-
-            {/* Today's macro summary */}
             {todayMacroLog && (
               <View style={styles.todayMacroCard}>
-                <Text style={styles.todayMacroTitle}>
-                  📊 {foodDate === todayStr ? "Today's" : foodDate} Totals
-                </Text>
+                <Text style={styles.todayMacroTitle}>📊 {foodDate} Totals</Text>
                 <View style={styles.macroRow}>
                   {[
-                    { label: 'Protein', val: todayMacroLog.protein_g, color: '#FF6B6B', target: macroTargets?.protein_g },
-                    { label: 'Carbs', val: todayMacroLog.carbs_g, color: '#4ECDC4', target: macroTargets?.carbs_g },
-                    { label: 'Fats', val: todayMacroLog.fats_g, color: '#FFE66D', target: macroTargets?.fats_g },
+                    { label: 'P', val: todayMacroLog.protein_g, color: '#FF6B6B', target: macroTargets?.protein_g },
+                    { label: 'C', val: todayMacroLog.carbs_g, color: '#4ECDC4', target: macroTargets?.carbs_g },
+                    { label: 'F', val: todayMacroLog.fats_g, color: '#FFE66D', target: macroTargets?.fats_g },
                     { label: 'kcal', val: todayMacroLog.calories, color: COLORS.roseGold, target: macroTargets?.calories },
                   ].map(m => (
                     <View key={m.label} style={[styles.macroPill,
                       { backgroundColor: m.color + '22', borderColor: m.color }]}>
                       <Text style={[styles.macroPillValue, { color: m.color }]}>{m.val}</Text>
-                      {m.target && (
-                        <Text style={styles.macroTarget}>/ {m.target}</Text>
-                      )}
+                      {m.target && <Text style={styles.macroTarget}>/{m.target}</Text>}
                       <Text style={styles.macroPillLabel}>{m.label}</Text>
                     </View>
                   ))}
                 </View>
               </View>
             )}
-
-            {/* Food entries grouped by meal */}
             {selectedFoodEntries.length === 0
               ? <View style={styles.empty}>
                   <Text style={styles.emptyText}>No food logged for {foodDate}</Text>
-                  <Text style={styles.emptySub}>Tap "+ Log Food" to add entries</Text>
                 </View>
               : (() => {
                   const byMeal = {};
@@ -595,8 +839,7 @@ export default function CoachHealthScreen({ route }) {
                         <View key={entry.id} style={styles.foodEntryRow}>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.foodEntryName}>
-                              {entry.food_name}
-                              {entry.brand ? ` · ${entry.brand}` : ''}
+                              {entry.food_name}{entry.brand ? ` · ${entry.brand}` : ''}
                             </Text>
                             <Text style={styles.foodEntryMacros}>
                               {entry.grams}g · P:{entry.protein_g}g C:{entry.carbs_g}g F:{entry.fats_g}g · {entry.calories}kcal
@@ -612,27 +855,355 @@ export default function CoachHealthScreen({ route }) {
                   ));
                 })()
             }
+          </View>
+        )}
 
-            {/* Recent food history */}
-            <Text style={styles.sectionTitle}>Recent Food History</Text>
-            {(() => {
-              const byDate = {};
-              foodEntries.forEach(e => {
-                if (!byDate[e.date]) byDate[e.date] = [];
-                byDate[e.date].push(e);
-              });
-              return Object.entries(byDate).slice(0, 7).map(([date, entries]) => {
-                const totalCals = entries.reduce((s, e) => s + (e.calories || 0), 0);
-                return (
-                  <TouchableOpacity key={date} style={styles.historyDateRow}
-                    onPress={() => setFoodDate(date)}>
-                    <Text style={styles.historyDate}>{date}</Text>
-                    <Text style={styles.historyEntries}>{entries.length} entries</Text>
-                    <Text style={styles.historyCals}>{totalCals.toFixed(0)} kcal</Text>
+        {/* ═══ MEAL PLANS TAB ═══ */}
+        {tab === 'mealplans' && (
+          <View>
+            <TouchableOpacity style={styles.actionBtn} onPress={openNewPlan}>
+              <Text style={styles.actionBtnText}>+ Create New Meal Plan</Text>
+            </TouchableOpacity>
+            {mealPlanTemplates.length === 0
+              ? <View style={styles.empty}>
+                  <Text style={styles.emptyText}>No meal plans yet</Text>
+                  <Text style={styles.emptySub}>Create a plan to quickly log repeated meals</Text>
+                </View>
+              : mealPlanTemplates.map(plan => {
+                  const items = plan.meal_plan_items || [];
+                  const byMeal = {};
+                  items.forEach(item => {
+                    if (!byMeal[item.meal_type]) byMeal[item.meal_type] = [];
+                    byMeal[item.meal_type].push(item);
+                  });
+                  const totalCals = items.reduce((s, i) => s + (i.calories || 0), 0);
+                  const totalP = items.reduce((s, i) => s + (i.protein_g || 0), 0);
+                  const totalC = items.reduce((s, i) => s + (i.carbs_g || 0), 0);
+                  const totalF = items.reduce((s, i) => s + (i.fats_g || 0), 0);
+                  const isExpanded = expandedPlanId === plan.id;
+                  return (
+                    <View key={plan.id} style={styles.planCard}>
+                      <TouchableOpacity style={styles.planHeader}
+                        onPress={() => setExpandedPlanId(isExpanded ? null : plan.id)}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.planName}>{plan.name}</Text>
+                          {plan.description && (
+                            <Text style={styles.planDesc}>{plan.description}</Text>
+                          )}
+                          <View style={styles.planMacroRow}>
+                            <Text style={[styles.planMacroText, { color: '#FF6B6B' }]}>
+                              P:{totalP.toFixed(0)}g
+                            </Text>
+                            <Text style={[styles.planMacroText, { color: '#4ECDC4' }]}>
+                              C:{totalC.toFixed(0)}g
+                            </Text>
+                            <Text style={[styles.planMacroText, { color: '#FFE66D' }]}>
+                              F:{totalF.toFixed(0)}g
+                            </Text>
+                            <Text style={[styles.planMacroText, { color: COLORS.roseGold }]}>
+                              {totalCals.toFixed(0)}kcal
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.planBadges}>
+                          {plan.is_shared && (
+                            <View style={styles.sharedBadge}>
+                              <Text style={styles.sharedBadgeText}>Shared</Text>
+                            </View>
+                          )}
+                          <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      {isExpanded && (
+                        <View style={styles.planExpanded}>
+                          {Object.entries(byMeal).map(([meal, mealItems]) => (
+                            <View key={meal} style={styles.planMealGroup}>
+                              <Text style={styles.planMealTitle}>{meal}</Text>
+                              {mealItems.map((item, i) => (
+                                <View key={i} style={styles.planItemRow}>
+                                  <Text style={styles.planItemName}>
+                                    {item.food_name}{item.brand ? ` · ${item.brand}` : ''}
+                                  </Text>
+                                  <Text style={styles.planItemDetail}>
+                                    {item.grams}g · {item.calories}kcal
+                                  </Text>
+                                </View>
+                              ))}
+                            </View>
+                          ))}
+
+                          <View style={styles.planActions}>
+                            <TouchableOpacity style={styles.planApplyBtn}
+                              onPress={() => {
+                                setApplyPlanTarget(plan);
+                                setApplyPlanDate(todayStr);
+                                setApplyPlanReplace(false);
+                                setShowApplyPlanModal(true);
+                              }}>
+                              <Text style={styles.planApplyBtnText}>✅ Apply to Date</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.planEditBtn}
+                              onPress={() => openEditPlan(plan)}>
+                              <Text style={styles.planEditBtnText}>✏️ Edit</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.planDeleteBtn}
+                              onPress={() => deleteMealPlan(plan)}>
+                              <Text style={styles.planDeleteBtnText}>🗑️</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+            }
+          </View>
+        )}
+
+        {/* ═══ TDEE TAB ═══ */}
+        {tab === 'tdee' && (
+          <View>
+            <Text style={styles.sectionTitle}>🔢 TDEE Calculator</Text>
+            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 16 }}>
+              Calculate Total Daily Energy Expenditure for {client.name}
+            </Text>
+
+            <View style={styles.tdeeCard}>
+              <Text style={styles.tdeeCardTitle}>📊 Client Stats</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {[
+                  { label: 'Weight (kg)', val: tdeeWeight, set: setTdeeWeight, placeholder: '70' },
+                  { label: 'Height (cm)', val: tdeeHeight, set: setTdeeHeight, placeholder: '170' },
+                  { label: 'Age', val: tdeeAge, set: setTdeeAge, placeholder: '25' },
+                ].map(f => (
+                  <View key={f.label} style={{ flex: 1 }}>
+                    <Text style={styles.modalLabel}>{f.label}</Text>
+                    <RNTextInput value={f.val} onChangeText={f.set}
+                      style={styles.modalInput} placeholder={f.placeholder}
+                      placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                  </View>
+                ))}
+              </View>
+
+              <Text style={styles.modalLabel}>Gender</Text>
+              <View style={styles.tdeeToggleRow}>
+                {['Male', 'Female'].map(g => (
+                  <TouchableOpacity key={g}
+                    style={[styles.tdeeToggleBtn, tdeeGender === g && styles.tdeeToggleBtnActive]}
+                    onPress={() => setTdeeGender(g)}>
+                    <Text style={[styles.tdeeToggleBtnText, tdeeGender === g && styles.tdeeToggleBtnTextActive]}>
+                      {g === 'Male' ? '♂ Male' : '♀ Female'}
+                    </Text>
                   </TouchableOpacity>
-                );
-              });
-            })()}
+                ))}
+              </View>
+
+              <Text style={styles.modalLabel}>Activity Level</Text>
+              {Object.entries(ACTIVITY_MULTIPLIERS).map(([key, val]) => (
+                <TouchableOpacity key={key}
+                  style={[styles.tdeeActivityBtn, tdeeActivity === key && styles.tdeeActivityBtnActive]}
+                  onPress={() => setTdeeActivity(key)}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.tdeeActivityLabel,
+                      tdeeActivity === key && { color: COLORS.white }]}>{val.label}</Text>
+                    <Text style={styles.tdeeActivityDesc}>{val.desc} (×{val.mult})</Text>
+                  </View>
+                  {tdeeActivity === key && <Text style={{ color: COLORS.white }}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.tdeeCard}>
+              <Text style={styles.tdeeCardTitle}>🎯 Goal</Text>
+              <View style={styles.tdeeGoalRow}>
+                {[
+                  { key: 'cutting', label: '📉 Cutting', color: '#FF6B6B' },
+                  { key: 'maintenance', label: '⚖️ Maintain', color: '#4ECDC4' },
+                  { key: 'bulking', label: '📈 Bulking', color: '#FFE66D' },
+                ].map(g => (
+                  <TouchableOpacity key={g.key}
+                    style={[styles.tdeeGoalBtn, tdeeGoal === g.key && {
+                      backgroundColor: g.color + '22', borderColor: g.color
+                    }]}
+                    onPress={() => {
+                      setTdeeGoal(g.key);
+                      const d = GOAL_DEFAULTS[g.key];
+                      setTdeeProteinPct(d.proteinPct);
+                      setTdeeCarbsPct(d.carbsPct);
+                      setTdeeFatsPct(d.fatsPct);
+                    }}>
+                    <Text style={[styles.tdeeGoalBtnText,
+                      tdeeGoal === g.key && { color: g.color }]}>{g.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {tdeeGoal === 'cutting' && (
+                <View>
+                  <Text style={styles.modalLabel}>Calorie Deficit (kcal/day)</Text>
+                  <View style={styles.tdeeAdjRow}>
+                    {['250','350','500','750','1000'].map(v => (
+                      <TouchableOpacity key={v}
+                        style={[styles.tdeeAdjChip, tdeeDeficit === v && styles.tdeeAdjChipActive]}
+                        onPress={() => setTdeeDeficit(v)}>
+                        <Text style={[styles.tdeeAdjChipText, tdeeDeficit === v && { color: COLORS.white }]}>
+                          -{v}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <RNTextInput value={tdeeDeficit} onChangeText={setTdeeDeficit}
+                    style={styles.modalInput} placeholder="500"
+                    placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                </View>
+              )}
+
+              {tdeeGoal === 'bulking' && (
+                <View>
+                  <Text style={styles.modalLabel}>Calorie Surplus (kcal/day)</Text>
+                  <View style={styles.tdeeAdjRow}>
+                    {['150','250','300','400','500'].map(v => (
+                      <TouchableOpacity key={v}
+                        style={[styles.tdeeAdjChip, tdeeSurplus === v && styles.tdeeAdjChipActive]}
+                        onPress={() => setTdeeSurplus(v)}>
+                        <Text style={[styles.tdeeAdjChipText, tdeeSurplus === v && { color: COLORS.white }]}>
+                          +{v}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <RNTextInput value={tdeeSurplus} onChangeText={setTdeeSurplus}
+                    style={styles.modalInput} placeholder="300"
+                    placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                </View>
+              )}
+
+              <TouchableOpacity style={styles.tdeeCalcBtn} onPress={calculateTDEE}>
+                <Text style={styles.tdeeCalcBtnText}>⚡ Calculate TDEE</Text>
+              </TouchableOpacity>
+            </View>
+
+            {tdeeResult && (
+              <View style={styles.tdeeResultCard}>
+                <Text style={styles.tdeeCardTitle}>📊 Results</Text>
+                <View style={styles.tdeeResultRow}>
+                  {[
+                    { label: 'BMR', val: tdeeResult.bmr, color: COLORS.white },
+                    { label: 'TDEE', val: tdeeResult.tdee, color: '#4ECDC4' },
+                    { label: 'Target', val: tdeeResult.targetCals,
+                      color: tdeeGoal === 'cutting' ? '#FF6B6B'
+                        : tdeeGoal === 'bulking' ? '#FFE66D' : COLORS.roseGold },
+                  ].map(r => (
+                    <View key={r.label} style={[styles.tdeeResultItem, { borderColor: r.color }]}>
+                      <Text style={[styles.tdeeResultValue, { color: r.color }]}>{r.val}</Text>
+                      <Text style={styles.tdeeResultLabel}>{r.label}</Text>
+                      <Text style={styles.tdeeResultSub}>kcal/day</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <Text style={styles.tdeeCardTitle}>🥗 Macro Breakdown</Text>
+                <View style={styles.tdeeToggleRow}>
+                  {[['percent','% Percentage'],['grams','g Grams']].map(([k,l]) => (
+                    <TouchableOpacity key={k}
+                      style={[styles.tdeeToggleBtn, tdeeMacroMode === k && styles.tdeeToggleBtnActive]}
+                      onPress={() => setTdeeMacroMode(k)}>
+                      <Text style={[styles.tdeeToggleBtnText, tdeeMacroMode === k && styles.tdeeToggleBtnTextActive]}>
+                        {l}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {tdeeMacroMode === 'percent' && (
+                  <View>
+                    {[
+                      { key: 'protein', label: 'Protein', pct: tdeeProteinPct, color: '#FF6B6B', calPer: 4 },
+                      { key: 'carbs', label: 'Carbs', pct: tdeeCarbsPct, color: '#4ECDC4', calPer: 4 },
+                      { key: 'fats', label: 'Fats', pct: tdeeFatsPct, color: '#FFE66D', calPer: 9 },
+                    ].map(m => {
+                      const grams = Math.round((m.pct / 100) * tdeeResult.targetCals / m.calPer);
+                      return (
+                        <View key={m.key} style={styles.tdeeMacroRow}>
+                          <View style={{ width: 70 }}>
+                            <Text style={[styles.tdeeMacroLabel, { color: m.color }]}>{m.label}</Text>
+                            <Text style={styles.tdeeMacroGrams}>{grams}g</Text>
+                          </View>
+                          <View style={styles.tdeeMacroSliderBg}>
+                            <View style={[styles.tdeeMacroSliderFill,
+                              { width: `${m.pct}%`, backgroundColor: m.color }]} />
+                          </View>
+                          <View style={styles.tdeePctInput}>
+                            <RNTextInput value={String(m.pct)}
+                              onChangeText={v => updateMacroPercent(m.key, v)}
+                              style={[styles.tdeePctField, { borderColor: m.color }]}
+                              keyboardType="numeric" />
+                            <Text style={[styles.tdeePctSymbol, { color: m.color }]}>%</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                    <Text style={[styles.tdeeTotalText, {
+                      color: (tdeeProteinPct + tdeeCarbsPct + tdeeFatsPct) === 100
+                        ? COLORS.success : COLORS.error
+                    }]}>
+                      Total: {tdeeProteinPct + tdeeCarbsPct + tdeeFatsPct}%
+                      {(tdeeProteinPct + tdeeCarbsPct + tdeeFatsPct) === 100 ? ' ✓' : ' (must = 100%)'}
+                    </Text>
+                    <View style={styles.tdeeSummaryRow}>
+                      {(() => {
+                        const m = getMacrosFromPercents();
+                        return [
+                          { l: 'Protein', v: `${m.p}g`, c: '#FF6B6B' },
+                          { l: 'Carbs', v: `${m.c}g`, c: '#4ECDC4' },
+                          { l: 'Fats', v: `${m.f}g`, c: '#FFE66D' },
+                          { l: 'Total', v: `${m.p*4+m.c*4+m.f*9}kcal`, c: COLORS.roseGold },
+                        ].map(x => (
+                          <View key={x.l} style={[styles.tdeeSummaryPill,
+                            { backgroundColor: x.c + '22', borderColor: x.c }]}>
+                            <Text style={[styles.tdeeSummaryVal, { color: x.c }]}>{x.v}</Text>
+                            <Text style={styles.tdeeSummaryLabel}>{x.l}</Text>
+                          </View>
+                        ));
+                      })()}
+                    </View>
+                  </View>
+                )}
+
+                {tdeeMacroMode === 'grams' && (
+                  <View>
+                    {[
+                      { label: 'Protein (g)', val: tdeeProteinG, set: setTdeeProteinG, color: '#FF6B6B' },
+                      { label: 'Carbs (g)', val: tdeeCarbsG, set: setTdeeCarbsG, color: '#4ECDC4' },
+                      { label: 'Fats (g)', val: tdeeFatsG, set: setTdeeFatsG, color: '#FFE66D' },
+                    ].map(m => (
+                      <View key={m.label}>
+                        <Text style={[styles.modalLabel, { color: m.color }]}>{m.label}</Text>
+                        <RNTextInput value={m.val} onChangeText={m.set}
+                          style={[styles.modalInput, { borderColor: m.color + '66' }]}
+                          placeholder="0" placeholderTextColor={COLORS.textMuted}
+                          keyboardType="numeric" />
+                      </View>
+                    ))}
+                    <Text style={[styles.tdeeTotalText, {
+                      color: Math.abs(getTdeeTargetCals() - tdeeResult.targetCals) < 50
+                        ? COLORS.success : '#FFB347'
+                    }]}>
+                      Total: {Math.round(getTdeeTargetCals())} kcal (target: {tdeeResult.targetCals})
+                    </Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.tdeeApplyBtn, loading && { opacity: 0.6 }]}
+                  onPress={applyTdeeAsTargets} disabled={loading}>
+                  <Text style={styles.tdeeApplyBtnText}>
+                    {loading ? 'Applying...' : `✅ Apply as Macro Targets for ${client.name}`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
 
@@ -661,12 +1232,11 @@ export default function CoachHealthScreen({ route }) {
             {!isFemale ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyText}>Not applicable</Text>
-                <Text style={styles.emptySub}>Cycle tracking is only for female clients</Text>
               </View>
             ) : cycles.length === 0 ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyText}>No cycle data</Text>
-                <Text style={styles.emptySub}>Client needs to log their period in their Health tab</Text>
+                <Text style={styles.emptySub}>Client needs to log period in Health tab</Text>
               </View>
             ) : (
               <View>
@@ -677,7 +1247,6 @@ export default function CoachHealthScreen({ route }) {
                     Cycle: {cycles[0].cycle_length} days · Period: {cycles[0].period_length} days
                   </Text>
                 </View>
-
                 <View style={styles.phaseLegendRow}>
                   {Object.values(CYCLE_PHASES).map(ph => (
                     <View key={ph.name} style={styles.phaseLegendItem}>
@@ -686,7 +1255,6 @@ export default function CoachHealthScreen({ route }) {
                     </View>
                   ))}
                 </View>
-
                 <View style={styles.calendarCard}>
                   <View style={styles.calNav}>
                     <TouchableOpacity onPress={() => setCalendarMonth(m =>
@@ -726,7 +1294,6 @@ export default function CoachHealthScreen({ route }) {
                     })}
                   </View>
                 </View>
-
                 {Object.values(CYCLE_PHASES).map(phase => (
                   <View key={phase.name} style={[styles.phaseCard, { borderColor: phase.color }]}>
                     <Text style={[styles.phaseTitle, { color: phase.color }]}>
@@ -761,7 +1328,7 @@ export default function CoachHealthScreen({ route }) {
               placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
             <Text style={styles.modalLabel}>Notes</Text>
             <RNTextInput value={weightNotes} onChangeText={setWeightNotes}
-              style={styles.modalInput} placeholder="Optional notes..."
+              style={styles.modalInput} placeholder="Optional..."
               placeholderTextColor={COLORS.textMuted} />
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancelBtn}
@@ -822,7 +1389,7 @@ export default function CoachHealthScreen({ route }) {
       <Modal visible={showFeedbackModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>💬 Workout Feedback</Text>
+            <Text style={styles.modalTitle}>💬 Feedback for {client.name}</Text>
             <Text style={styles.modalLabel}>Feedback</Text>
             <RNTextInput value={feedbackText} onChangeText={setFeedbackText}
               style={[styles.modalInput, { minHeight: 100, textAlignVertical: 'top' }]}
@@ -849,71 +1416,45 @@ export default function CoachHealthScreen({ route }) {
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.modalTitle}>🍽️ Log Food for {client.name}</Text>
               <Text style={styles.modalSubtitle}>📅 {foodDate}</Text>
-
-              {/* Meal type */}
               <Text style={styles.modalLabel}>Meal</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                style={{ marginBottom: 12 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                 {MEAL_TYPES.map(m => (
                   <TouchableOpacity key={m}
                     style={[styles.chip, foodMeal === m && styles.chipActive]}
                     onPress={() => setFoodMeal(m)}>
-                    <Text style={[styles.chipText, foodMeal === m && styles.chipTextActive]}>
-                      {m}
-                    </Text>
+                    <Text style={[styles.chipText, foodMeal === m && styles.chipTextActive]}>{m}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-
-              {/* Mode toggle */}
               <View style={styles.modeToggle}>
-                <TouchableOpacity
-                  style={[styles.modeBtn, foodInputMode === 'search' && styles.modeBtnActive]}
-                  onPress={() => setFoodInputMode('search')}>
-                  <Text style={[styles.modeBtnText, foodInputMode === 'search' && styles.modeBtnTextActive]}>
-                    🔍 Search Database
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modeBtn, foodInputMode === 'custom' && styles.modeBtnActive]}
-                  onPress={() => setFoodInputMode('custom')}>
-                  <Text style={[styles.modeBtnText, foodInputMode === 'custom' && styles.modeBtnTextActive]}>
-                    ✏️ Manual Entry
-                  </Text>
-                </TouchableOpacity>
+                {[['search','🔍 Search'],['custom','✏️ Manual']].map(([k,l]) => (
+                  <TouchableOpacity key={k}
+                    style={[styles.modeBtn, foodInputMode === k && styles.modeBtnActive]}
+                    onPress={() => setFoodInputMode(k)}>
+                    <Text style={[styles.modeBtnText, foodInputMode === k && styles.modeBtnTextActive]}>{l}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-
-              {/* Search mode */}
               {foodInputMode === 'search' && (
                 <View>
                   <RNTextInput value={foodSearch} onChangeText={setFoodSearch}
-                    style={styles.searchInput}
-                    placeholder="Search food or brand..."
+                    style={styles.searchInput} placeholder="Search food or brand..."
                     placeholderTextColor={COLORS.textMuted} />
-
                   <TouchableOpacity style={styles.addToDatabaseBtn}
                     onPress={() => setShowAddFoodLibModal(true)}>
-                    <Text style={styles.addToDatabaseBtnText}>
-                      + Add new food to database
-                    </Text>
+                    <Text style={styles.addToDatabaseBtnText}>+ Add new food to database</Text>
                   </TouchableOpacity>
-
                   <ScrollView style={{ maxHeight: 180 }} nestedScrollEnabled>
                     {filteredFoods.map(food => (
                       <TouchableOpacity key={food.id}
                         style={[styles.foodResultItem,
                           selectedFood?.id === food.id && styles.foodResultItemActive]}
-                        onPress={() => {
-                          setSelectedFood(food);
-                          setFoodGrams(String(food.serving_size_g || 100));
-                        }}>
+                        onPress={() => { setSelectedFood(food); setFoodGrams(String(food.serving_size_g || 100)); }}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.foodResultName}>{food.name}</Text>
-                          {food.brand && (
-                            <Text style={styles.foodResultBrand}>{food.brand}</Text>
-                          )}
+                          {food.brand && <Text style={styles.foodResultBrand}>{food.brand}</Text>}
                           <Text style={styles.foodResultMacros}>
-                            {food.category} · P:{food.protein_per_100g}g C:{food.carbs_per_100g}g F:{food.fats_per_100g}g per 100g
+                            P:{food.protein_per_100g}g C:{food.carbs_per_100g}g F:{food.fats_per_100g}g /100g
                           </Text>
                         </View>
                         {food.is_custom && (
@@ -927,20 +1468,15 @@ export default function CoachHealthScreen({ route }) {
                       <View style={styles.noResults}>
                         <Text style={styles.noResultsText}>No results for "{foodSearch}"</Text>
                         <TouchableOpacity onPress={() => setShowAddFoodLibModal(true)}>
-                          <Text style={styles.noResultsAdd}>
-                            + Add "{foodSearch}" to database
-                          </Text>
+                          <Text style={styles.noResultsAdd}>+ Add to database</Text>
                         </TouchableOpacity>
                       </View>
                     )}
                   </ScrollView>
-
                   {selectedFood && (
                     <View style={styles.selectedFoodCard}>
                       <Text style={styles.selectedFoodName}>{selectedFood.name}</Text>
-                      {selectedFood.brand && (
-                        <Text style={styles.selectedFoodBrand}>{selectedFood.brand}</Text>
-                      )}
+                      {selectedFood.brand && <Text style={styles.selectedFoodBrand}>{selectedFood.brand}</Text>}
                       <Text style={styles.modalLabel}>Grams</Text>
                       <RNTextInput value={foodGrams} onChangeText={setFoodGrams}
                         style={styles.modalInput} placeholder="100"
@@ -956,9 +1492,7 @@ export default function CoachHealthScreen({ route }) {
                               { label: 'kcal', val: m.calories, color: COLORS.roseGold },
                             ].map(x => (
                               <View key={x.label} style={styles.calcMacroPill}>
-                                <Text style={[styles.calcMacroVal, { color: x.color }]}>
-                                  {x.val}
-                                </Text>
+                                <Text style={[styles.calcMacroVal, { color: x.color }]}>{x.val}</Text>
                                 <Text style={styles.calcMacroLabel}>{x.label}</Text>
                               </View>
                             ));
@@ -969,8 +1503,6 @@ export default function CoachHealthScreen({ route }) {
                   )}
                 </View>
               )}
-
-              {/* Custom/manual mode */}
               {foodInputMode === 'custom' && (
                 <View>
                   <Text style={styles.modalLabel}>Food Name *</Text>
@@ -999,52 +1531,14 @@ export default function CoachHealthScreen({ route }) {
                       </View>
                     ))}
                   </View>
-                  {(customFood.protein || customFood.carbs || customFood.fats) && (
-                    <Text style={{ color: COLORS.roseGold, textAlign: 'center', marginBottom: 8 }}>
-                      Total: {(
-                        (parseFloat(customFood.protein) || 0) * 4 +
-                        (parseFloat(customFood.carbs) || 0) * 4 +
-                        (parseFloat(customFood.fats) || 0) * 9
-                      ).toFixed(0)} kcal
-                    </Text>
-                  )}
-                  <TouchableOpacity style={styles.saveToDbBtn}
-                    onPress={() => {
-                      setNewFoodLib({
-                        name: customFood.name,
-                        brand: customFood.brand,
-                        category: 'Other',
-                        serving_size_g: customFood.grams || '100',
-                        protein_per_100g: customFood.grams
-                          ? String((parseFloat(customFood.protein || 0) / parseFloat(customFood.grams || 100) * 100).toFixed(1))
-                          : customFood.protein,
-                        carbs_per_100g: customFood.grams
-                          ? String((parseFloat(customFood.carbs || 0) / parseFloat(customFood.grams || 100) * 100).toFixed(1))
-                          : customFood.carbs,
-                        fats_per_100g: customFood.grams
-                          ? String((parseFloat(customFood.fats || 0) / parseFloat(customFood.grams || 100) * 100).toFixed(1))
-                          : customFood.fats,
-                        calories_per_100g: customFood.grams
-                          ? String(((parseFloat(customFood.protein || 0) * 4 + parseFloat(customFood.carbs || 0) * 4 + parseFloat(customFood.fats || 0) * 9) / parseFloat(customFood.grams || 100) * 100).toFixed(0))
-                          : '0',
-                        fiber_g: '0', sugar_g: '0',
-                      });
-                      setShowAddFoodLibModal(true);
-                    }}>
-                    <Text style={styles.saveToDbBtnText}>
-                      💾 Save to food database for future use
-                    </Text>
-                  </TouchableOpacity>
                 </View>
               )}
-
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
                   onPress={() => setShowFoodModal(false)}>
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
+                <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
                   onPress={saveFoodEntry} disabled={loading}>
                   <Text style={styles.modalSaveText}>{loading ? '...' : 'Log Food'}</Text>
                 </TouchableOpacity>
@@ -1060,58 +1554,294 @@ export default function CoachHealthScreen({ route }) {
           <View style={[styles.modalCard, { maxHeight: '90%' }]}>
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.modalTitle}>➕ Add Food to Database</Text>
-              <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 16 }}>
-                This food will be available for all users to search and use
-              </Text>
-
               {[
-                { label: 'Food Name *', field: 'name', placeholder: 'e.g. Chicken Breast', type: 'default' },
-                { label: 'Brand (optional)', field: 'brand', placeholder: 'e.g. Monterey', type: 'default' },
-                { label: 'Serving Size (g)', field: 'serving_size_g', placeholder: '100', type: 'numeric' },
-                { label: 'Protein per 100g', field: 'protein_per_100g', placeholder: '0', type: 'numeric' },
-                { label: 'Carbs per 100g', field: 'carbs_per_100g', placeholder: '0', type: 'numeric' },
-                { label: 'Fats per 100g', field: 'fats_per_100g', placeholder: '0', type: 'numeric' },
-                { label: 'Calories per 100g', field: 'calories_per_100g', placeholder: '0', type: 'numeric' },
-                { label: 'Fiber per 100g (optional)', field: 'fiber_g', placeholder: '0', type: 'numeric' },
-                { label: 'Sugar per 100g (optional)', field: 'sugar_g', placeholder: '0', type: 'numeric' },
+                { label: 'Food Name *', field: 'name', type: 'default', placeholder: 'e.g. Chicken Breast' },
+                { label: 'Brand (optional)', field: 'brand', type: 'default', placeholder: 'e.g. Monterey' },
+                { label: 'Serving Size (g)', field: 'serving_size_g', type: 'numeric', placeholder: '100' },
+                { label: 'Protein per 100g', field: 'protein_per_100g', type: 'numeric', placeholder: '0' },
+                { label: 'Carbs per 100g', field: 'carbs_per_100g', type: 'numeric', placeholder: '0' },
+                { label: 'Fats per 100g', field: 'fats_per_100g', type: 'numeric', placeholder: '0' },
+                { label: 'Calories per 100g', field: 'calories_per_100g', type: 'numeric', placeholder: '0' },
+                { label: 'Fiber per 100g (optional)', field: 'fiber_g', type: 'numeric', placeholder: '0' },
+                { label: 'Sugar per 100g (optional)', field: 'sugar_g', type: 'numeric', placeholder: '0' },
               ].map(f => (
                 <View key={f.field}>
                   <Text style={styles.modalLabel}>{f.label}</Text>
                   <RNTextInput value={newFoodLib[f.field]}
                     onChangeText={v => setNewFoodLib(n => ({ ...n, [f.field]: v }))}
-                    style={styles.modalInput}
-                    placeholder={f.placeholder}
-                    placeholderTextColor={COLORS.textMuted}
-                    keyboardType={f.type} />
+                    style={styles.modalInput} placeholder={f.placeholder}
+                    placeholderTextColor={COLORS.textMuted} keyboardType={f.type} />
                 </View>
               ))}
-
               <Text style={styles.modalLabel}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                style={{ marginBottom: 16 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
                 {FOOD_CATEGORIES.map(c => (
                   <TouchableOpacity key={c}
                     style={[styles.chip, newFoodLib.category === c && styles.chipActive]}
                     onPress={() => setNewFoodLib(n => ({ ...n, category: c }))}>
-                    <Text style={[styles.chipText, newFoodLib.category === c && styles.chipTextActive]}>
-                      {c}
-                    </Text>
+                    <Text style={[styles.chipText, newFoodLib.category === c && styles.chipTextActive]}>{c}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
                   onPress={() => setShowAddFoodLibModal(false)}>
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
+                <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
                   onPress={saveFoodToLibrary} disabled={loading}>
                   <Text style={styles.modalSaveText}>{loading ? '...' : 'Add to Database'}</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ═══ MEAL PLAN CREATE/EDIT MODAL ═══ */}
+      <Modal visible={showMealPlanModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '95%' }]}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>
+                {editingPlan ? '✏️ Edit Meal Plan' : '📋 New Meal Plan'}
+              </Text>
+
+              <Text style={styles.modalLabel}>Plan Name *</Text>
+              <RNTextInput value={planName} onChangeText={setPlanName}
+                style={styles.modalInput} placeholder="e.g. Cutting Day A"
+                placeholderTextColor={COLORS.textMuted} />
+
+              <Text style={styles.modalLabel}>Description (optional)</Text>
+              <RNTextInput value={planDesc} onChangeText={setPlanDesc}
+                style={styles.modalInput} placeholder="e.g. Low carb day for rest days"
+                placeholderTextColor={COLORS.textMuted} />
+
+              <Text style={styles.modalLabel}>Goal</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {['Cutting','Maintenance','Bulking','Performance','Recovery','Custom'].map(g => (
+                  <TouchableOpacity key={g}
+                    style={[styles.chip, planGoal === g && styles.chipActive]}
+                    onPress={() => setPlanGoal(g)}>
+                    <Text style={[styles.chipText, planGoal === g && styles.chipTextActive]}>{g}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <TouchableOpacity style={styles.sharedToggle}
+                onPress={() => setPlanIsShared(!planIsShared)}>
+                <View style={[styles.sharedToggleCheck, planIsShared && styles.sharedToggleCheckActive]}>
+                  {planIsShared && <Text style={{ color: COLORS.white, fontSize: 10 }}>✓</Text>}
+                </View>
+                <View>
+                  <Text style={styles.sharedToggleLabel}>Share with all clients</Text>
+                  <Text style={styles.sharedToggleDesc}>
+                    Shared plans can be used by any client
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Items list */}
+              <Text style={styles.modalLabel}>
+                Food Items ({planItems.length} added)
+              </Text>
+
+              {planItems.length > 0 && (() => {
+                const byMeal = {};
+                planItems.forEach((item, idx) => {
+                  if (!byMeal[item.meal_type]) byMeal[item.meal_type] = [];
+                  byMeal[item.meal_type].push({ ...item, idx });
+                });
+                return Object.entries(byMeal).map(([meal, items]) => (
+                  <View key={meal} style={styles.planMealGroup}>
+                    <Text style={styles.planMealTitle}>{meal}</Text>
+                    {items.map(item => (
+                      <View key={item.idx} style={styles.planItemRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.planItemName}>{item.food_name}</Text>
+                          <Text style={styles.planItemDetail}>
+                            {item.grams}g · P:{item.protein_g}g C:{item.carbs_g}g F:{item.fats_g}g · {item.calories}kcal
+                          </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => removeItemFromPlan(item.idx)}>
+                          <Text style={{ color: COLORS.error }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ));
+              })()}
+
+              {/* Add item section */}
+              {planItemStep === 'list' ? (
+                <TouchableOpacity style={styles.addItemBtn}
+                  onPress={() => setPlanItemStep('search')}>
+                  <Text style={styles.addItemBtnText}>➕ Add Food Item</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.addItemForm}>
+                  <Text style={styles.modalLabel}>Meal Type</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                    style={{ marginBottom: 8 }}>
+                    {MEAL_TYPES.map(m => (
+                      <TouchableOpacity key={m}
+                        style={[styles.chip, planItemMeal === m && styles.chipActive]}
+                        onPress={() => setPlanItemMeal(m)}>
+                        <Text style={[styles.chipText, planItemMeal === m && styles.chipTextActive]}>{m}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <Text style={styles.modalLabel}>Search Food</Text>
+                  <RNTextInput value={planItemSearch} onChangeText={setPlanItemSearch}
+                    style={styles.searchInput} placeholder="Search food..."
+                    placeholderTextColor={COLORS.textMuted} />
+
+                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled>
+                    {filteredPlanFoods.map(food => (
+                      <TouchableOpacity key={food.id}
+                        style={[styles.foodResultItem,
+                          planItemFood?.id === food.id && styles.foodResultItemActive]}
+                        onPress={() => {
+                          setPlanItemFood(food);
+                          setPlanItemGrams(String(food.serving_size_g || 100));
+                        }}>
+                        <Text style={styles.foodResultName}>{food.name}</Text>
+                        {food.brand && <Text style={styles.foodResultBrand}>{food.brand}</Text>}
+                        <Text style={styles.foodResultMacros}>
+                          P:{food.protein_per_100g}g C:{food.carbs_per_100g}g F:{food.fats_per_100g}g /100g
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {planItemFood && (
+                    <View>
+                      <Text style={styles.modalLabel}>Grams</Text>
+                      <RNTextInput value={planItemGrams} onChangeText={setPlanItemGrams}
+                        style={styles.modalInput} placeholder="100"
+                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                      {planItemGrams && (
+                        <View style={styles.calcMacrosRow}>
+                          {(() => {
+                            const m = calcFoodMacros(planItemFood, planItemGrams);
+                            return [
+                              { label: 'P', val: m.protein, color: '#FF6B6B' },
+                              { label: 'C', val: m.carbs, color: '#4ECDC4' },
+                              { label: 'F', val: m.fats, color: '#FFE66D' },
+                              { label: 'kcal', val: m.calories, color: COLORS.roseGold },
+                            ].map(x => (
+                              <View key={x.label} style={styles.calcMacroPill}>
+                                <Text style={[styles.calcMacroVal, { color: x.color }]}>{x.val}</Text>
+                                <Text style={styles.calcMacroLabel}>{x.label}</Text>
+                              </View>
+                            ));
+                          })()}
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  <View style={styles.modalBtns}>
+                    <TouchableOpacity style={styles.modalCancelBtn}
+                      onPress={() => { setPlanItemStep('list'); setPlanItemFood(null); setPlanItemSearch(''); }}>
+                      <Text style={styles.modalCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.modalSaveBtn} onPress={addItemToPlan}>
+                      <Text style={styles.modalSaveText}>Add Item</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* Plan totals */}
+              {planItems.length > 0 && (
+                <View style={styles.planTotalsCard}>
+                  <Text style={styles.planTotalsTitle}>📊 Plan Totals</Text>
+                  <View style={styles.macroRow}>
+                    {[
+                      { label: 'Protein', val: planItems.reduce((s,i)=>s+(i.protein_g||0),0).toFixed(0), color: '#FF6B6B' },
+                      { label: 'Carbs', val: planItems.reduce((s,i)=>s+(i.carbs_g||0),0).toFixed(0), color: '#4ECDC4' },
+                      { label: 'Fats', val: planItems.reduce((s,i)=>s+(i.fats_g||0),0).toFixed(0), color: '#FFE66D' },
+                      { label: 'kcal', val: planItems.reduce((s,i)=>s+(i.calories||0),0).toFixed(0), color: COLORS.roseGold },
+                    ].map(m => (
+                      <View key={m.label} style={[styles.macroPill,
+                        { backgroundColor: m.color + '22', borderColor: m.color }]}>
+                        <Text style={[styles.macroPillValue, { color: m.color }]}>{m.val}g</Text>
+                        <Text style={styles.macroPillLabel}>{m.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.modalBtns}>
+                <TouchableOpacity style={styles.modalCancelBtn}
+                  onPress={() => setShowMealPlanModal(false)}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
+                  onPress={saveMealPlan} disabled={loading}>
+                  <Text style={styles.modalSaveText}>
+                    {loading ? 'Saving...' : '💾 Save Plan'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ═══ APPLY MEAL PLAN MODAL ═══ */}
+      <Modal visible={showApplyPlanModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>✅ Apply Meal Plan</Text>
+            <Text style={styles.modalSubtitle}>{applyPlanTarget?.name}</Text>
+
+            <Text style={styles.modalLabel}>Apply to Date (YYYY-MM-DD)</Text>
+            <RNTextInput value={applyPlanDate} onChangeText={setApplyPlanDate}
+              style={styles.modalInput} placeholder="2026-04-28"
+              placeholderTextColor={COLORS.textMuted} />
+
+            <TouchableOpacity style={styles.replaceToggle}
+              onPress={() => setApplyPlanReplace(!applyPlanReplace)}>
+              <View style={[styles.replaceCheck, applyPlanReplace && styles.replaceCheckActive]}>
+                {applyPlanReplace && <Text style={{ color: COLORS.white, fontSize: 10 }}>✓</Text>}
+              </View>
+              <View>
+                <Text style={styles.replaceLabel}>Replace existing food entries</Text>
+                <Text style={styles.replaceDesc}>
+                  {applyPlanReplace
+                    ? 'Existing entries for this date will be deleted'
+                    : 'New entries will be added on top of existing ones'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {applyPlanTarget && (
+              <View style={styles.applyPlanSummary}>
+                <Text style={styles.applyPlanSummaryText}>
+                  {(applyPlanTarget.meal_plan_items || []).length} food items will be logged
+                </Text>
+                <Text style={styles.applyPlanSummaryText}>
+                  Total: ~{(applyPlanTarget.meal_plan_items || []).reduce((s,i) => s+(i.calories||0), 0).toFixed(0)} kcal
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn}
+                onPress={() => setShowApplyPlanModal(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
+                onPress={applyMealPlan} disabled={loading}>
+                <Text style={styles.modalSaveText}>
+                  {loading ? 'Applying...' : 'Apply Plan'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1177,7 +1907,7 @@ const styles = StyleSheet.create({
   calNavBtn: { color: COLORS.roseGold, fontSize: 24, ...FONTS.bold, paddingHorizontal: 8 },
   calMonthText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   calDayHeaders: { flexDirection: 'row', marginBottom: 6 },
-  calDayHeader: { flex: 1, textAlign: 'center', color: COLORS.textMuted, fontSize: 10, ...FONTS.semibold },
+  calDayHeader: { flex: 1, textAlign: 'center', color: COLORS.textMuted, fontSize: 9, ...FONTS.semibold },
   calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   calCell: { width: `${100 / 7}%`, aspectRatio: 1, padding: 1 },
   calCellInner: { flex: 1, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
@@ -1185,8 +1915,6 @@ const styles = StyleSheet.create({
   phaseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderLeftWidth: 3 },
   phaseTitle: { ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6 },
   phaseRec: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 2 },
-
-  // Food tab
   foodDateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   foodDateLabel: { color: COLORS.textSecondary, fontSize: SIZES.sm, ...FONTS.semibold },
   foodDateInput: { flex: 1, color: COLORS.white, fontSize: SIZES.md, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
@@ -1199,12 +1927,87 @@ const styles = StyleSheet.create({
   foodEntryRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
   foodEntryName: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
   foodEntryMacros: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
-  historyDateRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 10, marginBottom: 4 },
-  historyDate: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold, flex: 1 },
-  historyEntries: { color: COLORS.textMuted, fontSize: SIZES.xs, marginRight: 12 },
-  historyCals: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.bold },
-
-  // Modals
+  planCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, marginBottom: 10, borderWidth: 1, borderColor: COLORS.darkBorder, overflow: 'hidden' },
+  planHeader: { flexDirection: 'row', alignItems: 'flex-start', padding: 14 },
+  planName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  planDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2, marginBottom: 4 },
+  planMacroRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 4 },
+  planMacroText: { fontSize: SIZES.xs, ...FONTS.semibold },
+  planBadges: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sharedBadge: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  sharedBadgeText: { color: COLORS.roseGold, fontSize: 9, ...FONTS.bold },
+  expandIcon: { color: COLORS.textMuted, fontSize: 12 },
+  planExpanded: { paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: 0.5, borderTopColor: COLORS.darkBorder },
+  planMealGroup: { marginBottom: 10 },
+  planMealTitle: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.xs, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6, marginTop: 8 },
+  planItemRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
+  planItemName: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
+  planItemDetail: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  planActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  planApplyBtn: { flex: 2, backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 10, alignItems: 'center' },
+  planApplyBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xs },
+  planEditBtn: { flex: 1, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.full, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
+  planEditBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
+  planDeleteBtn: { padding: 10, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.full },
+  planDeleteBtnText: { fontSize: 14 },
+  planTotalsCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginTop: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  planTotalsTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 8 },
+  addItemBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  addItemBtnText: { color: COLORS.roseGold, ...FONTS.bold },
+  addItemForm: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginTop: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  sharedToggle: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 16, padding: 12, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.darkBorder },
+  sharedToggleCheck: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: COLORS.darkBorder, justifyContent: 'center', alignItems: 'center', marginTop: 2 },
+  sharedToggleCheckActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
+  sharedToggleLabel: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
+  sharedToggleDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  replaceToggle: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 16, padding: 12, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.darkBorder },
+  replaceCheck: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: COLORS.darkBorder, justifyContent: 'center', alignItems: 'center', marginTop: 2 },
+  replaceCheckActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
+  replaceLabel: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
+  replaceDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  applyPlanSummary: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  applyPlanSummaryText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.semibold },
+  tdeeCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  tdeeResultCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  tdeeCardTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 12 },
+  tdeeToggleRow: { flexDirection: 'row', backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.full, padding: 3, marginBottom: 12 },
+  tdeeToggleBtn: { flex: 1, paddingVertical: 8, borderRadius: RADIUS.full, alignItems: 'center' },
+  tdeeToggleBtnActive: { backgroundColor: COLORS.roseGold },
+  tdeeToggleBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm, ...FONTS.semibold },
+  tdeeToggleBtnTextActive: { color: COLORS.white },
+  tdeeActivityBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
+  tdeeActivityBtnActive: { backgroundColor: COLORS.roseGoldFaint, borderColor: COLORS.roseGold },
+  tdeeActivityLabel: { color: COLORS.textSecondary, fontSize: SIZES.sm, ...FONTS.semibold },
+  tdeeActivityDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  tdeeGoalRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  tdeeGoalBtn: { flex: 1, paddingVertical: 12, borderRadius: RADIUS.md, alignItems: 'center', backgroundColor: COLORS.darkCard2, borderWidth: 1, borderColor: COLORS.darkBorder },
+  tdeeGoalBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
+  tdeeAdjRow: { flexDirection: 'row', gap: 6, marginBottom: 8, flexWrap: 'wrap' },
+  tdeeAdjChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, borderWidth: 1, borderColor: COLORS.darkBorder },
+  tdeeAdjChipActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
+  tdeeAdjChipText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
+  tdeeCalcBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  tdeeCalcBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  tdeeResultRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  tdeeResultItem: { flex: 1, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, alignItems: 'center', borderWidth: 1 },
+  tdeeResultValue: { fontSize: SIZES.xxl, ...FONTS.heavy },
+  tdeeResultLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold, marginTop: 2 },
+  tdeeResultSub: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
+  tdeeMacroRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  tdeeMacroLabel: { fontSize: SIZES.sm, ...FONTS.bold },
+  tdeeMacroGrams: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  tdeeMacroSliderBg: { flex: 1, height: 8, backgroundColor: COLORS.darkCard2, borderRadius: 4, overflow: 'hidden' },
+  tdeeMacroSliderFill: { height: 8, borderRadius: 4 },
+  tdeePctInput: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  tdeePctField: { width: 48, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 6, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, textAlign: 'center', ...FONTS.bold },
+  tdeePctSymbol: { fontSize: SIZES.sm, ...FONTS.bold },
+  tdeeTotalText: { fontSize: SIZES.sm, ...FONTS.bold, textAlign: 'right', marginBottom: 12 },
+  tdeeSummaryRow: { flexDirection: 'row', gap: 6, marginBottom: 16 },
+  tdeeSummaryPill: { flex: 1, borderRadius: RADIUS.md, padding: 10, alignItems: 'center', borderWidth: 1 },
+  tdeeSummaryVal: { fontSize: SIZES.md, ...FONTS.bold },
+  tdeeSummaryLabel: { fontSize: 9, color: COLORS.textMuted, marginTop: 2 },
+  tdeeApplyBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+  tdeeApplyBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 4 },
@@ -1224,7 +2027,7 @@ const styles = StyleSheet.create({
   searchInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, marginBottom: 8 },
   addToDatabaseBtn: { alignItems: 'center', marginBottom: 8, padding: 8 },
   addToDatabaseBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
-  foodResultItem: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 10, marginBottom: 4, borderWidth: 1, borderColor: COLORS.darkBorder, flexDirection: 'row', alignItems: 'center' },
+  foodResultItem: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 10, marginBottom: 4, borderWidth: 1, borderColor: COLORS.darkBorder },
   foodResultItemActive: { borderColor: COLORS.roseGold, backgroundColor: COLORS.roseGoldFaint },
   foodResultName: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
   foodResultBrand: { color: COLORS.roseGold, fontSize: SIZES.xs },
@@ -1241,8 +2044,6 @@ const styles = StyleSheet.create({
   calcMacroPill: { flex: 1, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm, padding: 8, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
   calcMacroVal: { fontSize: SIZES.md, ...FONTS.bold },
   calcMacroLabel: { fontSize: 9, color: COLORS.textMuted },
-  saveToDbBtn: { borderWidth: 1, borderColor: COLORS.roseGoldMid, borderRadius: RADIUS.md, padding: 10, alignItems: 'center', marginBottom: 12 },
-  saveToDbBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, marginRight: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
   chipActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
   chipText: { color: COLORS.textSecondary, fontSize: SIZES.xs },
