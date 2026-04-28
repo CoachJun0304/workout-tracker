@@ -20,6 +20,8 @@ export default function ClientLogScreen({ route, navigation }) {
   const { exercises = [], day = '', freeLog = false } = route.params || {};
   const { profile, unit } = useAuth();
   const currentMonth = MONTHS[new Date().getMonth()];
+  const ul = unitLabel(unit);
+
   const [sessionNote, setSessionNote] = useState('');
   const [sets, setSets] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -35,18 +37,88 @@ export default function ClientLogScreen({ route, navigation }) {
   const [dateInput, setDateInput] = useState(
     new Date().toISOString().split('T')[0]
   );
+  const [previousLogs, setPreviousLogs] = useState({});
 
   useEffect(() => {
     if (exercises.length > 0) {
       setSets(exercises.map(ex => ({
         exercise_name: ex.exercise_name,
         muscle_group: ex.muscle_group || 'Other',
+        prescribed_sets: ex.working_sets || 3,
+        prescribed_reps: ex.reps || '8-12',
         entries: Array.from({ length: ex.working_sets || 3 }, () => ({
-          weight: '', reps: ex.reps || '', unit: unit || 'kg', is_pb: false
+          weight: '', reps: ex.reps?.split('-')[0] || '', unit: unit || 'kg', is_pb: false
         }))
       })));
+      fetchPreviousLogs(exercises.map(e => e.exercise_name));
     }
   }, []);
+
+  async function fetchPreviousLogs(exerciseNames) {
+    if (!profile?.id) return;
+    const results = {};
+    for (const name of exerciseNames) {
+      const { data } = await supabase
+        .from('workout_logs')
+        .select('*')
+        .eq('client_id', profile.id)
+        .eq('exercise_name', name)
+        .order('logged_at', { ascending: false })
+        .limit(10);
+      if (data && data.length > 0) {
+        const byDate = {};
+        data.forEach(log => {
+          const date = log.logged_at?.split('T')[0];
+          if (!byDate[date]) byDate[date] = [];
+          byDate[date].push(log);
+        });
+        const lastDate = Object.keys(byDate).sort().reverse()[0];
+        results[name] = byDate[lastDate] || [];
+      }
+    }
+    setPreviousLogs(results);
+  }
+
+  // ── PROGRESSIVE OVERLOAD SUGGESTION ─────────────────
+
+  function getProgressionSuggestion(exerciseName, prescribed) {
+    const prev = previousLogs[exerciseName];
+    if (!prev || prev.length === 0) return null;
+
+    const prescribedSets = parseInt(prescribed?.prescribed_sets) || 3;
+    const prescribedRepsStr = prescribed?.prescribed_reps || '8';
+    const prescribedReps = parseInt(prescribedRepsStr.split('-')[0]) || 8;
+    const prescribedRepsMax = parseInt(prescribedRepsStr.split('-').pop()) || prescribedReps;
+
+    const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
+    const avgReps = prev.reduce((s, l) => s + (l.reps || 0), 0) / prev.length;
+    const lastDate = prev[0]?.logged_at?.split('T')[0] || '';
+
+    let suggestion = '';
+    let suggestionColor = COLORS.success;
+    let actionType = '';
+
+    if (avgReps >= prescribedRepsMax) {
+      const addWeight = unit === 'lbs' ? 5 : 2.5;
+      const newWeight = toDisplay(maxWeight + addWeight, unit);
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add weight: try ${prescribedSets}×${prescribedReps} @ ${newWeight}${ul} (+${addWeight}${ul})`;
+      suggestionColor = '#FFE66D';
+      actionType = 'weight';
+    } else if (avgReps >= prescribedReps) {
+      const newReps = Math.round(avgReps) + 1;
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add rep: try ${prescribedSets}×${newReps} @ ${toDisplay(maxWeight, unit)}${ul} (+1 rep)`;
+      suggestionColor = COLORS.success;
+      actionType = 'reps';
+    } else {
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Consolidate: try ${prescribedSets}×${prescribedReps} @ ${toDisplay(maxWeight, unit)}${ul} (same weight)`;
+      suggestionColor = '#FF9F43';
+      actionType = 'consolidate';
+    }
+
+    return { suggestion, suggestionColor, maxWeight, avgReps, lastDate, actionType };
+  }
+
+  // ── SET MANAGEMENT ───────────────────────────────────
 
   function updateEntry(exIdx, setIdx, field, value) {
     setSets(s => s.map((ex, i) => i === exIdx
@@ -79,11 +151,15 @@ export default function ClientLogScreen({ route, navigation }) {
 
   function addExercise() {
     if (!newEx.name.trim()) { showAlert('Error', 'Exercise name required'); return; }
-    setSets(s => [...s, {
+    const newSet = {
       exercise_name: newEx.name.trim(),
       muscle_group: newEx.muscle_group,
+      prescribed_sets: 3,
+      prescribed_reps: '8-12',
       entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }]
-    }]);
+    };
+    setSets(s => [...s, newSet]);
+    fetchPreviousLogs([newEx.name.trim()]);
     setNewEx({ name: '', muscle_group: 'Chest' });
     setShowAddEx(false);
   }
@@ -164,8 +240,6 @@ export default function ClientLogScreen({ route, navigation }) {
     );
   }
 
-  const ul = unitLabel(unit);
-
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -219,84 +293,114 @@ export default function ClientLogScreen({ route, navigation }) {
           </View>
         )}
 
-        {sets.map((ex, exIdx) => (
-          <View key={exIdx} style={styles.exerciseCard}>
-            <View style={styles.exHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.exerciseName}>{ex.exercise_name}</Text>
-                <Text style={styles.muscleGroup}>{ex.muscle_group}</Text>
-              </View>
-              <TouchableOpacity onPress={() => removeExercise(exIdx)}
-                style={styles.removeExBtn}>
-                <Text style={{ color: COLORS.error }}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {ex.entries.map((entry, setIdx) => {
-              const e1rm = entry.weight && entry.reps
-                ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
-                : null;
-              return (
-                <View key={setIdx} style={styles.setCard}>
-                  <View style={styles.setCardHeader}>
-                    <View style={styles.setNumBadge}>
-                      <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
-                    </View>
-                    <View style={styles.setCardActions}>
-                      <TouchableOpacity
-                        style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
-                        onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-                        <Text style={styles.prBtnText}>
-                          {entry.is_pb ? '🏆 PR' : '○ PR'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.removeSetBtn}
-                        onPress={() => removeSet(exIdx, setIdx)}>
-                        <Text style={styles.removeSetBtnText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <View style={styles.setCardInputs}>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Weight</Text>
-                      <RNTextInput
-                        value={entry.weight}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                        style={styles.inputGroupField}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
-                    </View>
-                    <TouchableOpacity style={styles.unitToggle}
-                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
-                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
-                      <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Reps</Text>
-                      <RNTextInput
-                        value={entry.reps}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                        style={styles.inputGroupField}
-                        placeholder="0"
-                        placeholderTextColor={COLORS.textMuted}
-                        keyboardType="numeric" />
-                    </View>
-                  </View>
-                  {e1rm && (
-                    <Text style={styles.e1rmText}>
-                      est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
+        {/* Exercises */}
+        {sets.map((ex, exIdx) => {
+          const progression = getProgressionSuggestion(ex.exercise_name, ex);
+          return (
+            <View key={exIdx} style={styles.exerciseCard}>
+              <View style={styles.exHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exerciseName}>{ex.exercise_name}</Text>
+                  <Text style={styles.muscleGroup}>{ex.muscle_group}</Text>
+                  {!freeLog && (
+                    <Text style={styles.prescribedText}>
+                      Prescribed: {ex.prescribed_sets}×{ex.prescribed_reps}
                     </Text>
                   )}
                 </View>
-              );
-            })}
+                <TouchableOpacity onPress={() => removeExercise(exIdx)}
+                  style={styles.removeExBtn}>
+                  <Text style={{ color: COLORS.error }}>✕</Text>
+                </TouchableOpacity>
+              </View>
 
-            <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
-              <Text style={styles.addSetBtnText}>+ Add Set</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
+              {/* Progressive overload suggestion */}
+              {progression && (
+                <View style={[styles.progressionCard, { borderColor: progression.suggestionColor }]}>
+                  <View style={styles.progressionHeader}>
+                    <Text style={styles.progressionIcon}>
+                      {progression.actionType === 'weight' ? '⬆️' :
+                       progression.actionType === 'reps' ? '➕' : '🔄'}
+                    </Text>
+                    <Text style={styles.progressionTitle}>
+                      {progression.actionType === 'weight' ? 'Time to add weight!' :
+                       progression.actionType === 'reps' ? 'Add a rep today!' :
+                       'Consolidate — same weight'}
+                    </Text>
+                  </View>
+                  <Text style={[styles.progressionText, { color: progression.suggestionColor }]}>
+                    {progression.suggestion}
+                  </Text>
+                </View>
+              )}
+
+              {/* Sets */}
+              {ex.entries.map((entry, setIdx) => {
+                const e1rm = entry.weight && entry.reps
+                  ? estimated1RM(toKg(parseFloat(entry.weight), entry.unit), parseInt(entry.reps))
+                  : null;
+                return (
+                  <View key={setIdx} style={styles.setCard}>
+                    <View style={styles.setCardHeader}>
+                      <View style={styles.setNumBadge}>
+                        <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
+                      </View>
+                      <View style={styles.setCardActions}>
+                        <TouchableOpacity
+                          style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                          onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                          <Text style={styles.prBtnText}>
+                            {entry.is_pb ? '🏆 PR' : '○ PR'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.removeSetBtn}
+                          onPress={() => removeSet(exIdx, setIdx)}>
+                          <Text style={styles.removeSetBtnText}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <View style={styles.setCardInputs}>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Weight</Text>
+                        <RNTextInput
+                          value={entry.weight}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                          style={styles.inputGroupField}
+                          placeholder="0"
+                          placeholderTextColor={COLORS.textMuted}
+                          keyboardType="numeric" />
+                      </View>
+                      <TouchableOpacity style={styles.unitToggle}
+                        onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                          entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                        <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
+                      </TouchableOpacity>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Reps</Text>
+                        <RNTextInput
+                          value={entry.reps}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                          style={styles.inputGroupField}
+                          placeholder="0"
+                          placeholderTextColor={COLORS.textMuted}
+                          keyboardType="numeric" />
+                      </View>
+                    </View>
+                    {e1rm && (
+                      <Text style={styles.e1rmText}>
+                        est. 1RM: {toDisplay(e1rm, entry.unit || 'kg')}{entry.unit || 'kg'}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+
+              <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
+                <Text style={styles.addSetBtnText}>+ Add Set</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })}
 
         <TouchableOpacity style={styles.addExBtn} onPress={() => setShowAddEx(true)}>
           <Text style={styles.addExBtnText}>➕ Add Exercise</Text>
@@ -304,7 +408,8 @@ export default function ClientLogScreen({ route, navigation }) {
 
         <TouchableOpacity
           style={[styles.saveBtn, loading && { opacity: 0.6 }]}
-          onPress={handleSave} disabled={loading}>
+          onPress={handleSave}
+          disabled={loading}>
           <Text style={styles.saveBtnText}>
             {loading ? 'Saving...' : '💾 Save Workout'}
           </Text>
@@ -399,10 +504,16 @@ const styles = StyleSheet.create({
   emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4, textAlign: 'center' },
   exerciseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
-  exHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  exHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   exerciseName: { color: COLORS.white, fontSize: SIZES.lg, ...FONTS.bold },
   muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.sm, marginTop: 2 },
+  prescribedText: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   removeExBtn: { padding: 8 },
+  progressionCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 10, borderWidth: 1, borderLeftWidth: 3 },
+  progressionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  progressionIcon: { fontSize: 14 },
+  progressionTitle: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold },
+  progressionText: { fontSize: SIZES.xs, lineHeight: 18 },
   setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
   setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   setNumBadge: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: COLORS.roseGoldMid },
