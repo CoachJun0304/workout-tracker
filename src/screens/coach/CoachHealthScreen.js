@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
-  Modal, TextInput as RNTextInput
+  Modal, TextInput as RNTextInput, ActivityIndicator
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { supabase } from '../../lib/supabase';
@@ -29,7 +29,7 @@ const GOAL_DEFAULTS = {
   bulking: { proteinPct: 30, carbsPct: 50, fatsPct: 20 },
 };
 
-export default function CoachHealthScreen({ route }) {
+export default function CoachHealthScreen({ route, navigation }) {
   const { client } = route.params || {};
   const { profile } = useAuth();
   const todayStr = new Date().toISOString().split('T')[0];
@@ -46,6 +46,7 @@ export default function CoachHealthScreen({ route }) {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedCalDate, setSelectedCalDate] = useState(todayStr);
   const [loading, setLoading] = useState(false);
+  const [retagging, setRetagging] = useState(false);
 
   // Weight modal
   const [showWeightModal, setShowWeightModal] = useState(false);
@@ -98,6 +99,13 @@ export default function CoachHealthScreen({ route }) {
   const [applyPlanDate, setApplyPlanDate] = useState(todayStr);
   const [applyPlanReplace, setApplyPlanReplace] = useState(false);
   const [expandedPlanId, setExpandedPlanId] = useState(null);
+
+  // Cycle edit modals
+  const [showEditCycleModal, setShowEditCycleModal] = useState(false);
+  const [editingCycle, setEditingCycle] = useState(null);
+  const [editCycleInput, setEditCycleInput] = useState({
+    start_date: '', cycle_length: '28', period_length: '5'
+  });
 
   // TDEE state
   const [tdeeWeight, setTdeeWeight] = useState(client?.weight_kg ? String(client.weight_kg) : '');
@@ -360,19 +368,15 @@ export default function CoachHealthScreen({ route }) {
 
   function openNewPlan() {
     setEditingPlan(null);
-    setPlanName('');
-    setPlanGoal('');
-    setPlanDesc('');
-    setPlanIsShared(false);
-    setPlanItems([]);
+    setPlanName(''); setPlanGoal(''); setPlanDesc('');
+    setPlanIsShared(false); setPlanItems([]);
     setPlanItemStep('list');
     setShowMealPlanModal(true);
   }
 
   function openEditPlan(plan) {
     setEditingPlan(plan);
-    setPlanName(plan.name);
-    setPlanGoal(plan.goal || '');
+    setPlanName(plan.name); setPlanGoal(plan.goal || '');
     setPlanDesc(plan.description || '');
     setPlanIsShared(plan.is_shared || false);
     setPlanItems(plan.meal_plan_items || []);
@@ -383,23 +387,18 @@ export default function CoachHealthScreen({ route }) {
   function addItemToPlan() {
     if (!planItemFood) { showAlert('Error', 'Select a food first'); return; }
     const macros = calcFoodMacros(planItemFood, planItemGrams);
-    const newItem = {
+    setPlanItems(p => [...p, {
       meal_type: planItemMeal,
       food_name: planItemFood.name,
       brand: planItemFood.brand || null,
       food_library_id: planItemFood.id,
       grams: parseFloat(planItemGrams),
-      protein_g: macros.protein,
-      carbs_g: macros.carbs,
-      fats_g: macros.fats,
-      calories: macros.calories,
+      protein_g: macros.protein, carbs_g: macros.carbs,
+      fats_g: macros.fats, calories: macros.calories,
       order_index: planItems.length,
-    };
-    setPlanItems(p => [...p, newItem]);
-    setPlanItemFood(null);
-    setPlanItemGrams('100');
-    setPlanItemSearch('');
-    setPlanItemStep('list');
+    }]);
+    setPlanItemFood(null); setPlanItemGrams('100');
+    setPlanItemSearch(''); setPlanItemStep('list');
   }
 
   function removeItemFromPlan(idx) {
@@ -410,7 +409,6 @@ export default function CoachHealthScreen({ route }) {
     if (!planName.trim()) { showAlert('Error', 'Plan name required'); return; }
     if (planItems.length === 0) { showAlert('Error', 'Add at least one food item'); return; }
     setLoading(true);
-
     const totals = planItems.reduce((acc, e) => ({
       protein: acc.protein + (e.protein_g || 0),
       carbs: acc.carbs + (e.carbs_g || 0),
@@ -421,39 +419,28 @@ export default function CoachHealthScreen({ route }) {
     let planId;
     if (editingPlan) {
       await supabase.from('meal_plan_templates').update({
-        name: planName.trim(),
-        description: planDesc.trim() || null,
-        goal: planGoal || null,
-        is_shared: planIsShared,
-        total_calories: totals.calories,
-        total_protein_g: totals.protein,
-        total_carbs_g: totals.carbs,
-        total_fats_g: totals.fats,
+        name: planName.trim(), description: planDesc.trim() || null,
+        goal: planGoal || null, is_shared: planIsShared,
+        total_calories: totals.calories, total_protein_g: totals.protein,
+        total_carbs_g: totals.carbs, total_fats_g: totals.fats,
       }).eq('id', editingPlan.id);
       await supabase.from('meal_plan_items').delete().eq('template_id', editingPlan.id);
       planId = editingPlan.id;
     } else {
       const { data } = await supabase.from('meal_plan_templates').insert({
-        name: planName.trim(),
-        description: planDesc.trim() || null,
-        goal: planGoal || null,
-        is_shared: planIsShared,
-        client_id: client.id,
-        created_by: profile.id,
-        total_calories: totals.calories,
-        total_protein_g: totals.protein,
-        total_carbs_g: totals.carbs,
-        total_fats_g: totals.fats,
+        name: planName.trim(), description: planDesc.trim() || null,
+        goal: planGoal || null, is_shared: planIsShared,
+        client_id: client.id, created_by: profile.id,
+        total_calories: totals.calories, total_protein_g: totals.protein,
+        total_carbs_g: totals.carbs, total_fats_g: totals.fats,
       }).select().single();
       planId = data?.id;
     }
-
     if (planId) {
       await supabase.from('meal_plan_items').insert(
         planItems.map((item, i) => ({ ...item, template_id: planId, order_index: i }))
       );
     }
-
     setLoading(false);
     setShowMealPlanModal(false);
     showAlert('✅ Meal Plan Saved!', `"${planName}" has been saved.`);
@@ -461,19 +448,16 @@ export default function CoachHealthScreen({ route }) {
   }
 
   async function deleteMealPlan(plan) {
-    showConfirm('Delete Meal Plan',
-      `Delete "${plan.name}"? This cannot be undone.`,
-      async () => {
-        await supabase.from('meal_plan_items').delete().eq('template_id', plan.id);
-        await supabase.from('meal_plan_templates').delete().eq('id', plan.id);
-        fetchAll();
-      }, null, 'Delete', true);
+    showConfirm('Delete Meal Plan', `Delete "${plan.name}"?`, async () => {
+      await supabase.from('meal_plan_items').delete().eq('template_id', plan.id);
+      await supabase.from('meal_plan_templates').delete().eq('id', plan.id);
+      fetchAll();
+    }, null, 'Delete', true);
   }
 
   async function applyMealPlan() {
     if (!applyPlanTarget) return;
     setLoading(true);
-
     const items = applyPlanTarget.meal_plan_items || [];
     if (applyPlanReplace) {
       const existingIds = foodEntries.filter(e => e.date === applyPlanDate).map(e => e.id);
@@ -481,33 +465,100 @@ export default function CoachHealthScreen({ route }) {
         await supabase.from('food_entries').delete().in('id', existingIds);
       }
     }
-
     const newEntries = items.map(item => ({
-      client_id: client.id,
-      date: applyPlanDate,
-      food_name: item.food_name,
-      brand: item.brand || null,
+      client_id: client.id, date: applyPlanDate,
+      food_name: item.food_name, brand: item.brand || null,
       food_library_id: item.food_library_id || null,
-      grams: item.grams,
-      protein_g: item.protein_g,
-      carbs_g: item.carbs_g,
-      fats_g: item.fats_g,
-      calories: item.calories,
-      meal_type: item.meal_type,
+      grams: item.grams, protein_g: item.protein_g,
+      carbs_g: item.carbs_g, fats_g: item.fats_g,
+      calories: item.calories, meal_type: item.meal_type,
     }));
-
     await supabase.from('food_entries').insert(newEntries);
-
-    const existing = applyPlanReplace
-      ? []
-      : foodEntries.filter(e => e.date === applyPlanDate);
+    const existing = applyPlanReplace ? [] : foodEntries.filter(e => e.date === applyPlanDate);
     await recalcMacroLog(applyPlanDate, [...existing, ...newEntries]);
-
     setLoading(false);
     setShowApplyPlanModal(false);
     showAlert('✅ Meal Plan Applied!',
       `"${applyPlanTarget.name}" applied to ${applyPlanDate} for ${client.name}.`);
     fetchAll();
+  }
+
+  // ── CYCLE EDIT / RETAG ────────────────────────────────
+
+  function openEditCycle(cycle) {
+    setEditingCycle(cycle);
+    setEditCycleInput({
+      start_date: cycle.cycle_start_date,
+      cycle_length: String(cycle.cycle_length),
+      period_length: String(cycle.period_length),
+    });
+    setShowEditCycleModal(true);
+  }
+
+  async function saveEditCycle() {
+    if (!editCycleInput.start_date) {
+      showAlert('Error', 'Enter the start date'); return;
+    }
+    setLoading(true);
+    const newStart = editCycleInput.start_date;
+    const newLength = parseInt(editCycleInput.cycle_length) || 28;
+    const newPeriod = parseInt(editCycleInput.period_length) || 5;
+    await supabase.from('menstrual_cycles').update({
+      cycle_start_date: newStart,
+      cycle_length: newLength,
+      period_length: newPeriod,
+      updated_at: new Date().toISOString(),
+    }).eq('id', editingCycle.id);
+    setLoading(false);
+    setShowEditCycleModal(false);
+    await retroactivelyRetag(newStart, newLength);
+    fetchAll();
+  }
+
+  async function deleteCycleEntry(cycle) {
+    showConfirm(
+      'Delete Cycle Entry',
+      `Delete cycle starting ${cycle.cycle_start_date}? Workout logs in this date range will have phase tags cleared.`,
+      async () => {
+        setRetagging(true);
+        const endDate = new Date(
+          new Date(cycle.cycle_start_date).getTime() +
+          cycle.cycle_length * 24 * 60 * 60 * 1000
+        ).toISOString().split('T')[0];
+        await supabase.from('workout_logs')
+          .update({ cycle_phase: null })
+          .eq('client_id', client.id)
+          .gte('logged_at', cycle.cycle_start_date)
+          .lte('logged_at', endDate + 'T23:59:59');
+        await supabase.from('menstrual_cycles').delete().eq('id', cycle.id);
+        setRetagging(false);
+        fetchAll();
+        showAlert('🗑️ Deleted', 'Cycle entry removed and phase tags cleared.');
+      },
+      null, 'Delete', true
+    );
+  }
+
+  async function retroactivelyRetag(startDate, cycleLength) {
+    setRetagging(true);
+    const endDate = new Date(
+      new Date(startDate).getTime() + cycleLength * 24 * 60 * 60 * 1000
+    ).toISOString().split('T')[0];
+    const { data: logs } = await supabase
+      .from('workout_logs').select('id, logged_at')
+      .eq('client_id', client.id)
+      .gte('logged_at', startDate)
+      .lte('logged_at', endDate + 'T23:59:59');
+    if (!logs || logs.length === 0) { setRetagging(false); return; }
+    for (const log of logs) {
+      const logDate = log.logged_at.split('T')[0];
+      const phase = getPhaseForDate(logDate, startDate, cycleLength);
+      await supabase.from('workout_logs')
+        .update({ cycle_phase: phase?.name || null })
+        .eq('id', log.id);
+    }
+    setRetagging(false);
+    showAlert('✅ Done!', `${logs.length} workout logs updated with corrected phase tags.`);
   }
 
   // ── TDEE ─────────────────────────────────────────────
@@ -633,6 +684,19 @@ export default function CoachHealthScreen({ route }) {
 
   return (
     <View style={styles.container}>
+
+      {/* Retagging overlay */}
+      {retagging && (
+        <View style={styles.retaggingOverlay}>
+          <View style={styles.retaggingCard}>
+            <ActivityIndicator color={COLORS.roseGold} size="large" />
+            <Text style={styles.retaggingText}>Updating phase tags...</Text>
+            <Text style={styles.retaggingSubText}>
+              Retroactively updating workout logs for {client.name}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* Client banner */}
       <View style={styles.banner}>
@@ -887,22 +951,12 @@ export default function CoachHealthScreen({ route }) {
                         onPress={() => setExpandedPlanId(isExpanded ? null : plan.id)}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.planName}>{plan.name}</Text>
-                          {plan.description && (
-                            <Text style={styles.planDesc}>{plan.description}</Text>
-                          )}
+                          {plan.description && <Text style={styles.planDesc}>{plan.description}</Text>}
                           <View style={styles.planMacroRow}>
-                            <Text style={[styles.planMacroText, { color: '#FF6B6B' }]}>
-                              P:{totalP.toFixed(0)}g
-                            </Text>
-                            <Text style={[styles.planMacroText, { color: '#4ECDC4' }]}>
-                              C:{totalC.toFixed(0)}g
-                            </Text>
-                            <Text style={[styles.planMacroText, { color: '#FFE66D' }]}>
-                              F:{totalF.toFixed(0)}g
-                            </Text>
-                            <Text style={[styles.planMacroText, { color: COLORS.roseGold }]}>
-                              {totalCals.toFixed(0)}kcal
-                            </Text>
+                            <Text style={[styles.planMacroText, { color: '#FF6B6B' }]}>P:{totalP.toFixed(0)}g</Text>
+                            <Text style={[styles.planMacroText, { color: '#4ECDC4' }]}>C:{totalC.toFixed(0)}g</Text>
+                            <Text style={[styles.planMacroText, { color: '#FFE66D' }]}>F:{totalF.toFixed(0)}g</Text>
+                            <Text style={[styles.planMacroText, { color: COLORS.roseGold }]}>{totalCals.toFixed(0)}kcal</Text>
                           </View>
                         </View>
                         <View style={styles.planBadges}>
@@ -914,7 +968,6 @@ export default function CoachHealthScreen({ route }) {
                           <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
                         </View>
                       </TouchableOpacity>
-
                       {isExpanded && (
                         <View style={styles.planExpanded}>
                           {Object.entries(byMeal).map(([meal, mealItems]) => (
@@ -932,7 +985,6 @@ export default function CoachHealthScreen({ route }) {
                               ))}
                             </View>
                           ))}
-
                           <View style={styles.planActions}>
                             <TouchableOpacity style={styles.planApplyBtn}
                               onPress={() => {
@@ -985,7 +1037,6 @@ export default function CoachHealthScreen({ route }) {
                   </View>
                 ))}
               </View>
-
               <Text style={styles.modalLabel}>Gender</Text>
               <View style={styles.tdeeToggleRow}>
                 {['Male', 'Female'].map(g => (
@@ -998,7 +1049,6 @@ export default function CoachHealthScreen({ route }) {
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={styles.modalLabel}>Activity Level</Text>
               {Object.entries(ACTIVITY_MULTIPLIERS).map(([key, val]) => (
                 <TouchableOpacity key={key}
@@ -1038,7 +1088,6 @@ export default function CoachHealthScreen({ route }) {
                   </TouchableOpacity>
                 ))}
               </View>
-
               {tdeeGoal === 'cutting' && (
                 <View>
                   <Text style={styles.modalLabel}>Calorie Deficit (kcal/day)</Text>
@@ -1047,9 +1096,7 @@ export default function CoachHealthScreen({ route }) {
                       <TouchableOpacity key={v}
                         style={[styles.tdeeAdjChip, tdeeDeficit === v && styles.tdeeAdjChipActive]}
                         onPress={() => setTdeeDeficit(v)}>
-                        <Text style={[styles.tdeeAdjChipText, tdeeDeficit === v && { color: COLORS.white }]}>
-                          -{v}
-                        </Text>
+                        <Text style={[styles.tdeeAdjChipText, tdeeDeficit === v && { color: COLORS.white }]}>-{v}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -1058,7 +1105,6 @@ export default function CoachHealthScreen({ route }) {
                     placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
                 </View>
               )}
-
               {tdeeGoal === 'bulking' && (
                 <View>
                   <Text style={styles.modalLabel}>Calorie Surplus (kcal/day)</Text>
@@ -1067,9 +1113,7 @@ export default function CoachHealthScreen({ route }) {
                       <TouchableOpacity key={v}
                         style={[styles.tdeeAdjChip, tdeeSurplus === v && styles.tdeeAdjChipActive]}
                         onPress={() => setTdeeSurplus(v)}>
-                        <Text style={[styles.tdeeAdjChipText, tdeeSurplus === v && { color: COLORS.white }]}>
-                          +{v}
-                        </Text>
+                        <Text style={[styles.tdeeAdjChipText, tdeeSurplus === v && { color: COLORS.white }]}>+{v}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -1078,7 +1122,6 @@ export default function CoachHealthScreen({ route }) {
                     placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
                 </View>
               )}
-
               <TouchableOpacity style={styles.tdeeCalcBtn} onPress={calculateTDEE}>
                 <Text style={styles.tdeeCalcBtnText}>⚡ Calculate TDEE</Text>
               </TouchableOpacity>
@@ -1102,7 +1145,6 @@ export default function CoachHealthScreen({ route }) {
                     </View>
                   ))}
                 </View>
-
                 <Text style={styles.tdeeCardTitle}>🥗 Macro Breakdown</Text>
                 <View style={styles.tdeeToggleRow}>
                   {[['percent','% Percentage'],['grams','g Grams']].map(([k,l]) => (
@@ -1115,7 +1157,6 @@ export default function CoachHealthScreen({ route }) {
                     </TouchableOpacity>
                   ))}
                 </View>
-
                 {tdeeMacroMode === 'percent' && (
                   <View>
                     {[
@@ -1170,7 +1211,6 @@ export default function CoachHealthScreen({ route }) {
                     </View>
                   </View>
                 )}
-
                 {tdeeMacroMode === 'grams' && (
                   <View>
                     {[
@@ -1194,7 +1234,6 @@ export default function CoachHealthScreen({ route }) {
                     </Text>
                   </View>
                 )}
-
                 <TouchableOpacity
                   style={[styles.tdeeApplyBtn, loading && { opacity: 0.6 }]}
                   onPress={applyTdeeAsTargets} disabled={loading}>
@@ -1240,6 +1279,17 @@ export default function CoachHealthScreen({ route }) {
               </View>
             ) : (
               <View>
+                {/* Phase progress link */}
+                {navigation && (
+                  <TouchableOpacity
+                    style={styles.phaseProgressBtn}
+                    onPress={() => navigation.navigate('PhaseProgress', { client })}>
+                    <Text style={styles.phaseProgressBtnText}>
+                      📊 View Phase Records & Trends for {client.name}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
                 <View style={styles.cycleInfoCard}>
                   <Text style={styles.cycleInfoTitle}>🌸 Cycle Info</Text>
                   <Text style={styles.cycleInfoText}>Last period: {cycles[0].cycle_start_date}</Text>
@@ -1247,6 +1297,7 @@ export default function CoachHealthScreen({ route }) {
                     Cycle: {cycles[0].cycle_length} days · Period: {cycles[0].period_length} days
                   </Text>
                 </View>
+
                 <View style={styles.phaseLegendRow}>
                   {Object.values(CYCLE_PHASES).map(ph => (
                     <View key={ph.name} style={styles.phaseLegendItem}>
@@ -1255,6 +1306,7 @@ export default function CoachHealthScreen({ route }) {
                     </View>
                   ))}
                 </View>
+
                 <View style={styles.calendarCard}>
                   <View style={styles.calNav}>
                     <TouchableOpacity onPress={() => setCalendarMonth(m =>
@@ -1294,6 +1346,7 @@ export default function CoachHealthScreen({ route }) {
                     })}
                   </View>
                 </View>
+
                 {Object.values(CYCLE_PHASES).map(phase => (
                   <View key={phase.name} style={[styles.phaseCard, { borderColor: phase.color }]}>
                     <Text style={[styles.phaseTitle, { color: phase.color }]}>
@@ -1302,6 +1355,30 @@ export default function CoachHealthScreen({ route }) {
                     <Text style={styles.phaseRec}>💪 {phase.workoutRecommendations[0]}</Text>
                     <Text style={styles.phaseRec}>🥗 {phase.nutritionTips[0]}</Text>
                     <Text style={styles.phaseRec}>⚖️ {phase.weightNote}</Text>
+                  </View>
+                ))}
+
+                {/* Editable cycle history */}
+                <Text style={styles.sectionTitle}>Cycle History</Text>
+                <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 8, fontStyle: 'italic' }}>
+                  ✏️ Edit to retroactively fix phase tags on workout logs
+                </Text>
+                {cycles.map((c, i) => (
+                  <View key={c.id || i} style={styles.cycleHistoryRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cycleHistoryDate}>🔴 {c.cycle_start_date}</Text>
+                      <Text style={styles.cycleHistoryDetail}>
+                        {c.cycle_length} day cycle · {c.period_length} day period
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={styles.cycleEditBtn}
+                      onPress={() => openEditCycle(c)}>
+                      <Text>✏️</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cycleDelBtn}
+                      onPress={() => deleteCycleEntry(c)}>
+                      <Text>🗑️</Text>
+                    </TouchableOpacity>
                   </View>
                 ))}
               </View>
@@ -1562,8 +1639,8 @@ export default function CoachHealthScreen({ route }) {
                 { label: 'Carbs per 100g', field: 'carbs_per_100g', type: 'numeric', placeholder: '0' },
                 { label: 'Fats per 100g', field: 'fats_per_100g', type: 'numeric', placeholder: '0' },
                 { label: 'Calories per 100g', field: 'calories_per_100g', type: 'numeric', placeholder: '0' },
-                { label: 'Fiber per 100g (optional)', field: 'fiber_g', type: 'numeric', placeholder: '0' },
-                { label: 'Sugar per 100g (optional)', field: 'sugar_g', type: 'numeric', placeholder: '0' },
+                { label: 'Fiber per 100g', field: 'fiber_g', type: 'numeric', placeholder: '0' },
+                { label: 'Sugar per 100g', field: 'sugar_g', type: 'numeric', placeholder: '0' },
               ].map(f => (
                 <View key={f.field}>
                   <Text style={styles.modalLabel}>{f.label}</Text>
@@ -1606,17 +1683,14 @@ export default function CoachHealthScreen({ route }) {
               <Text style={styles.modalTitle}>
                 {editingPlan ? '✏️ Edit Meal Plan' : '📋 New Meal Plan'}
               </Text>
-
               <Text style={styles.modalLabel}>Plan Name *</Text>
               <RNTextInput value={planName} onChangeText={setPlanName}
                 style={styles.modalInput} placeholder="e.g. Cutting Day A"
                 placeholderTextColor={COLORS.textMuted} />
-
               <Text style={styles.modalLabel}>Description (optional)</Text>
               <RNTextInput value={planDesc} onChangeText={setPlanDesc}
-                style={styles.modalInput} placeholder="e.g. Low carb day for rest days"
+                style={styles.modalInput} placeholder="e.g. Low carb day"
                 placeholderTextColor={COLORS.textMuted} />
-
               <Text style={styles.modalLabel}>Goal</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                 {['Cutting','Maintenance','Bulking','Performance','Recovery','Custom'].map(g => (
@@ -1627,7 +1701,6 @@ export default function CoachHealthScreen({ route }) {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-
               <TouchableOpacity style={styles.sharedToggle}
                 onPress={() => setPlanIsShared(!planIsShared)}>
                 <View style={[styles.sharedToggleCheck, planIsShared && styles.sharedToggleCheckActive]}>
@@ -1635,17 +1708,10 @@ export default function CoachHealthScreen({ route }) {
                 </View>
                 <View>
                   <Text style={styles.sharedToggleLabel}>Share with all clients</Text>
-                  <Text style={styles.sharedToggleDesc}>
-                    Shared plans can be used by any client
-                  </Text>
+                  <Text style={styles.sharedToggleDesc}>Shared plans can be used by any client</Text>
                 </View>
               </TouchableOpacity>
-
-              {/* Items list */}
-              <Text style={styles.modalLabel}>
-                Food Items ({planItems.length} added)
-              </Text>
-
+              <Text style={styles.modalLabel}>Food Items ({planItems.length} added)</Text>
               {planItems.length > 0 && (() => {
                 const byMeal = {};
                 planItems.forEach((item, idx) => {
@@ -1671,8 +1737,6 @@ export default function CoachHealthScreen({ route }) {
                   </View>
                 ));
               })()}
-
-              {/* Add item section */}
               {planItemStep === 'list' ? (
                 <TouchableOpacity style={styles.addItemBtn}
                   onPress={() => setPlanItemStep('search')}>
@@ -1681,8 +1745,7 @@ export default function CoachHealthScreen({ route }) {
               ) : (
                 <View style={styles.addItemForm}>
                   <Text style={styles.modalLabel}>Meal Type</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                    style={{ marginBottom: 8 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
                     {MEAL_TYPES.map(m => (
                       <TouchableOpacity key={m}
                         style={[styles.chip, planItemMeal === m && styles.chipActive]}
@@ -1691,12 +1754,10 @@ export default function CoachHealthScreen({ route }) {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
-
                   <Text style={styles.modalLabel}>Search Food</Text>
                   <RNTextInput value={planItemSearch} onChangeText={setPlanItemSearch}
                     style={styles.searchInput} placeholder="Search food..."
                     placeholderTextColor={COLORS.textMuted} />
-
                   <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled>
                     {filteredPlanFoods.map(food => (
                       <TouchableOpacity key={food.id}
@@ -1714,7 +1775,6 @@ export default function CoachHealthScreen({ route }) {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
-
                   {planItemFood && (
                     <View>
                       <Text style={styles.modalLabel}>Grams</Text>
@@ -1741,7 +1801,6 @@ export default function CoachHealthScreen({ route }) {
                       )}
                     </View>
                   )}
-
                   <View style={styles.modalBtns}>
                     <TouchableOpacity style={styles.modalCancelBtn}
                       onPress={() => { setPlanItemStep('list'); setPlanItemFood(null); setPlanItemSearch(''); }}>
@@ -1753,8 +1812,6 @@ export default function CoachHealthScreen({ route }) {
                   </View>
                 </View>
               )}
-
-              {/* Plan totals */}
               {planItems.length > 0 && (
                 <View style={styles.planTotalsCard}>
                   <Text style={styles.planTotalsTitle}>📊 Plan Totals</Text>
@@ -1774,7 +1831,6 @@ export default function CoachHealthScreen({ route }) {
                   </View>
                 </View>
               )}
-
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
                   onPress={() => setShowMealPlanModal(false)}>
@@ -1782,9 +1838,7 @@ export default function CoachHealthScreen({ route }) {
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
                   onPress={saveMealPlan} disabled={loading}>
-                  <Text style={styles.modalSaveText}>
-                    {loading ? 'Saving...' : '💾 Save Plan'}
-                  </Text>
+                  <Text style={styles.modalSaveText}>{loading ? 'Saving...' : '💾 Save Plan'}</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1798,12 +1852,10 @@ export default function CoachHealthScreen({ route }) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>✅ Apply Meal Plan</Text>
             <Text style={styles.modalSubtitle}>{applyPlanTarget?.name}</Text>
-
             <Text style={styles.modalLabel}>Apply to Date (YYYY-MM-DD)</Text>
             <RNTextInput value={applyPlanDate} onChangeText={setApplyPlanDate}
               style={styles.modalInput} placeholder="2026-04-28"
               placeholderTextColor={COLORS.textMuted} />
-
             <TouchableOpacity style={styles.replaceToggle}
               onPress={() => setApplyPlanReplace(!applyPlanReplace)}>
               <View style={[styles.replaceCheck, applyPlanReplace && styles.replaceCheckActive]}>
@@ -1818,7 +1870,6 @@ export default function CoachHealthScreen({ route }) {
                 </Text>
               </View>
             </TouchableOpacity>
-
             {applyPlanTarget && (
               <View style={styles.applyPlanSummary}>
                 <Text style={styles.applyPlanSummaryText}>
@@ -1829,7 +1880,6 @@ export default function CoachHealthScreen({ route }) {
                 </Text>
               </View>
             )}
-
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancelBtn}
                 onPress={() => setShowApplyPlanModal(false)}>
@@ -1837,9 +1887,50 @@ export default function CoachHealthScreen({ route }) {
               </TouchableOpacity>
               <TouchableOpacity style={[styles.modalSaveBtn, loading && { opacity: 0.6 }]}
                 onPress={applyMealPlan} disabled={loading}>
-                <Text style={styles.modalSaveText}>
-                  {loading ? 'Applying...' : 'Apply Plan'}
-                </Text>
+                <Text style={styles.modalSaveText}>{loading ? 'Applying...' : 'Apply Plan'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ═══ EDIT CYCLE MODAL ═══ */}
+      <Modal visible={showEditCycleModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>✏️ Edit Cycle</Text>
+            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 12 }}>
+              Saving will retroactively update phase tags on all workout logs within this cycle's date range.
+            </Text>
+            <Text style={styles.modalLabel}>Period Start Date (YYYY-MM-DD)</Text>
+            <RNTextInput value={editCycleInput.start_date}
+              onChangeText={v => setEditCycleInput(c => ({ ...c, start_date: v }))}
+              style={styles.modalInput} placeholder="e.g. 2026-04-22"
+              placeholderTextColor={COLORS.textMuted} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Cycle Length (days)</Text>
+                <RNTextInput value={editCycleInput.cycle_length}
+                  onChangeText={v => setEditCycleInput(c => ({ ...c, cycle_length: v }))}
+                  style={styles.modalInput} placeholder="28"
+                  placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Period Length (days)</Text>
+                <RNTextInput value={editCycleInput.period_length}
+                  onChangeText={v => setEditCycleInput(c => ({ ...c, period_length: v }))}
+                  style={styles.modalInput} placeholder="5"
+                  placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+              </View>
+            </View>
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn}
+                onPress={() => setShowEditCycleModal(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn}
+                onPress={saveEditCycle} disabled={loading}>
+                <Text style={styles.modalSaveText}>{loading ? '...' : 'Save & Retag'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1915,6 +2006,17 @@ const styles = StyleSheet.create({
   phaseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderLeftWidth: 3 },
   phaseTitle: { ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6 },
   phaseRec: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 2 },
+  cycleHistoryRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
+  cycleHistoryDate: { color: COLORS.white, ...FONTS.semibold, fontSize: SIZES.sm },
+  cycleHistoryDetail: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  cycleEditBtn: { padding: 8, backgroundColor: COLORS.darkCard2, borderRadius: 6, marginLeft: 6 },
+  cycleDelBtn: { padding: 8, backgroundColor: '#FF4B4B22', borderRadius: 6, marginLeft: 4 },
+  phaseProgressBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  phaseProgressBtnText: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.sm },
+  retaggingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 999 },
+  retaggingCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.xl, padding: 32, alignItems: 'center', gap: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  retaggingText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
+  retaggingSubText: { color: COLORS.textMuted, fontSize: SIZES.sm },
   foodDateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   foodDateLabel: { color: COLORS.textSecondary, fontSize: SIZES.sm, ...FONTS.semibold },
   foodDateInput: { flex: 1, color: COLORS.white, fontSize: SIZES.md, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.sm, padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder },

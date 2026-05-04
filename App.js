@@ -7,11 +7,9 @@ import { StatusBar } from 'expo-status-bar';
 import { Text, ActivityIndicator, View, StyleSheet } from 'react-native';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { COLORS, FONTS, SIZES } from './src/theme';
-
 // Auth
 import LoginScreen from './src/screens/auth/LoginScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
-
 // Coach
 import DashboardScreen from './src/screens/coach/DashboardScreen';
 import ClientsScreen from './src/screens/coach/ClientsScreen';
@@ -22,14 +20,14 @@ import AssignProgramScreen from './src/screens/coach/AssignProgramScreen';
 import LogWorkoutScreen from './src/screens/coach/LogWorkoutScreen';
 import CoachHealthScreen from './src/screens/coach/CoachHealthScreen';
 import ClientReportScreen from './src/screens/coach/ClientReportScreen';
-
+import MultiClientSessionScreen from './src/screens/coach/MultiClientSessionScreen';
 // Shared
 import ProgressScreen from './src/screens/shared/ProgressScreen';
 import RecordsScreen from './src/screens/shared/RecordsScreen';
 import HealthScreen from './src/screens/shared/HealthScreen';
 import WorkoutRescheduleScreen from './src/screens/shared/WorkoutRescheduleScreen';
 import WorkoutHistoryScreen from './src/screens/shared/WorkoutHistoryScreen';
-
+import PhaseProgressScreen from './src/screens/shared/PhaseProgressScreen';
 // Client
 import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
 import ClientWorkoutScreen from './src/screens/client/ClientWorkoutScreen';
@@ -83,6 +81,8 @@ function CoachClientsStack() {
         options={{ title: 'Workout Report' }} />
       <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen}
         options={{ title: 'Workout History' }} />
+      <Stack.Screen name="PhaseProgress" component={PhaseProgressScreen}
+        options={{ title: 'Phase Records' }} />
     </Stack.Navigator>
   );
 }
@@ -116,6 +116,13 @@ function CoachTabs() {
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>👥</Text>,
         }} />
+      <Tab.Screen name="GroupSession" component={MultiClientSessionScreen}
+        options={{
+          title: 'Group Session',
+          tabBarLabel: 'Group',
+          tabBarIcon: ({ color }) =>
+            <Text style={{ fontSize: 20, color }}>🏋️</Text>,
+        }} />
       <Tab.Screen name="Templates" component={TemplatesScreen}
         options={{
           title: 'Programs',
@@ -127,19 +134,22 @@ function CoachTabs() {
   );
 }
 
-// ── CLIENT STACK ──────────────────────────────────────────
+// ── CLIENT STACK ─────────────────────────────────────────
 function ClientStack() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="ClientHome" component={ClientHomeScreen} />
+    <Stack.Navigator screenOptions={stackOptions}>
+      <Stack.Screen name="ClientHome" component={ClientHomeScreen}
+        options={{ headerShown: false }} />
       <Stack.Screen name="ClientWorkout" component={ClientWorkoutScreen}
-        options={{ ...stackOptions, headerShown: true, title: "Today's Workout" }} />
+        options={{ title: "Today's Workout" }} />
       <Stack.Screen name="ClientLog" component={ClientLogScreen}
-        options={{ ...stackOptions, headerShown: true, title: 'Log Workout' }} />
+        options={{ title: 'Log Workout' }} />
       <Stack.Screen name="Reschedule" component={WorkoutRescheduleScreen}
-        options={{ ...stackOptions, headerShown: true, title: 'Workout Schedule' }} />
+        options={{ title: 'Reschedule Workout' }} />
       <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen}
-        options={{ ...stackOptions, headerShown: true, title: 'Workout History' }} />
+        options={{ title: 'Workout History' }} />
+      <Stack.Screen name="PhaseProgress" component={PhaseProgressScreen}
+        options={{ title: 'Phase Records' }} />
     </Stack.Navigator>
   );
 }
@@ -155,34 +165,41 @@ function ClientTabs() {
       tabBarActiveTintColor: COLORS.roseGold,
       tabBarInactiveTintColor: COLORS.textMuted,
       tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-      headerShown: false,
+      headerStyle: { backgroundColor: COLORS.darkCard },
+      headerTintColor: COLORS.white,
+      headerTitleStyle: { fontWeight: '700' },
     }}>
       <Tab.Screen name="Home" component={ClientStack}
         options={{
-          tabBarLabel: 'Workouts',
+          headerShown: false,
+          tabBarLabel: 'Home',
           tabBarIcon: ({ color }) =>
-            <Text style={{ fontSize: 20, color }}>🏋️</Text>,
+            <Text style={{ fontSize: 20, color }}>🏠</Text>,
         }} />
-      <Tab.Screen name="MyProgress" component={ProgressScreen}
+      <Tab.Screen name="MyProgress" component={ClientProgressScreen}
         options={{
+          title: 'My Progress',
           tabBarLabel: 'Progress',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>📈</Text>,
         }} />
       <Tab.Screen name="MyHealth" component={HealthScreen}
         options={{
+          title: 'Health & Nutrition',
           tabBarLabel: 'Health',
           tabBarIcon: ({ color }) =>
-            <Text style={{ fontSize: 20, color }}>🥗</Text>,
+            <Text style={{ fontSize: 20, color }}>❤️</Text>,
         }} />
-      <Tab.Screen name="MyRecords" component={RecordsScreen}
+      <Tab.Screen name="MyRecords" component={ClientRecordsScreen}
         options={{
+          title: 'My Records',
           tabBarLabel: 'Records',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>🏆</Text>,
         }} />
       <Tab.Screen name="MyProfile" component={ClientProfileScreen}
         options={{
+          title: 'My Profile',
           tabBarLabel: 'Profile',
           tabBarIcon: ({ color }) =>
             <Text style={{ fontSize: 20, color }}>👤</Text>,
@@ -191,53 +208,59 @@ function ClientTabs() {
   );
 }
 
-// ── ROOT NAVIGATOR ──────────────────────────────────────────
-function AppNavigator() {
-  const { user, loading, isCoach } = useAuth();
+// ── AUTH STACK ───────────────────────────────────────────
+function AuthStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+    </Stack.Navigator>
+  );
+}
+
+// ── ROOT ─────────────────────────────────────────────────
+function RootNavigator() {
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={COLORS.roseGold} />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <Text style={styles.loadingText}>FitCoach Pro</Text>
       </View>
     );
   }
 
-  return (
-    <NavigationContainer>
-      {!user ? (
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
-        </Stack.Navigator>
-      ) : isCoach ? (
-        <CoachTabs />
-      ) : (
-        <ClientTabs />
-      )}
-    </NavigationContainer>
-  );
+  if (!user || !profile) return <AuthStack />;
+  if (profile.role === 'coach') return <CoachTabs />;
+  return <ClientTabs />;
 }
 
 export default function App() {
   return (
-    <PaperProvider theme={theme}>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <AppNavigator />
-      </AuthProvider>
-    </PaperProvider>
+    <AuthProvider>
+      <PaperProvider theme={theme}>
+        <NavigationContainer>
+          <StatusBar style="light" />
+          <RootNavigator />
+        </NavigationContainer>
+      </PaperProvider>
+    </AuthProvider>
   );
 }
 
 const styles = StyleSheet.create({
   loadingContainer: {
-    flex: 1, justifyContent: 'center',
-    alignItems: 'center', backgroundColor: COLORS.darkBg,
+    flex: 1,
+    backgroundColor: COLORS.darkBg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
   },
   loadingText: {
-    color: COLORS.textSecondary,
-    marginTop: 12, fontSize: SIZES.md,
+    color: COLORS.roseGold,
+    fontSize: SIZES.xl,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
 });
