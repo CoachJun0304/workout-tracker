@@ -9,7 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
 import { toKg, toDisplay, unitLabel } from '../../utils/unitUtils';
 import { showAlert, showConfirm } from '../../utils/webAlert';
-import { getPhaseForDate, getCurrentPhase } from '../../data/cycleData';
+import { getPhaseForDate } from '../../data/cycleData';
 
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
@@ -27,29 +27,22 @@ export default function MultiClientSessionScreen({ navigation }) {
   const currentDay = DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
   const currentMonth = MONTHS[new Date().getMonth()];
 
-  // Client selection
   const [allClients, setAllClients] = useState([]);
   const [selectedClients, setSelectedClients] = useState([]);
   const [showClientPicker, setShowClientPicker] = useState(true);
   const [loadingClients, setLoadingClients] = useState(true);
-
-  // Active client tab
   const [activeClientIdx, setActiveClientIdx] = useState(0);
-
-  // Per-client session data: { [clientId]: { sets, savedStatus, sessionNote, day, loading } }
   const [clientSessions, setClientSessions] = useState({});
+  const [previousLogs, setPreviousLogs] = useState({});
 
-  // Session date (shared)
   const [sessionDate, setSessionDate] = useState(todayStr);
   const [sessionDay, setSessionDay] = useState(currentDay);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateInput, setDateInput] = useState(todayStr);
 
-  // Add exercise modal
   const [showAddEx, setShowAddEx] = useState(false);
   const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest' });
 
-  // Timer (shared across all clients)
   const [showTimerModal, setShowTimerModal] = useState(false);
   const [timerDuration, setTimerDuration] = useState(90);
   const [timerCustomInput, setTimerCustomInput] = useState('');
@@ -60,7 +53,6 @@ export default function MultiClientSessionScreen({ navigation }) {
   const timerRef = useRef(null);
   const flashAnim = useRef(new Animated.Value(0)).current;
 
-  // Save all loading
   const [savingAll, setSavingAll] = useState(false);
 
   useEffect(() => { fetchAllClients(); }, []);
@@ -151,10 +143,33 @@ export default function MultiClientSessionScreen({ navigation }) {
     setLoadingClients(false);
   }
 
+  async function fetchPreviousLogsForClient(clientId, exerciseNames) {
+    const results = {};
+    for (const name of exerciseNames) {
+      const { data } = await supabase
+        .from('workout_logs')
+        .select('*')
+        .eq('client_id', clientId)
+        .eq('exercise_name', name)
+        .order('logged_at', { ascending: false })
+        .limit(10);
+      if (data && data.length > 0) {
+        const byDate = {};
+        data.forEach(log => {
+          const date = log.logged_at?.split('T')[0];
+          if (!byDate[date]) byDate[date] = [];
+          byDate[date].push(log);
+        });
+        const lastDate = Object.keys(byDate).sort().reverse()[0];
+        results[name] = byDate[lastDate] || [];
+      }
+    }
+    return results;
+  }
+
   async function initClientSession(client, day) {
     const d = day || sessionDay;
 
-    // Fetch program
     const { data: prog } = await supabase
       .from('client_programs')
       .select('*, workout_templates(*, template_exercises(*))')
@@ -164,8 +179,8 @@ export default function MultiClientSessionScreen({ navigation }) {
       .limit(1)
       .single();
 
-    // Build exercise sets from program
     let sets = [];
+    let exerciseNames = [];
     if (prog?.workout_templates?.template_exercises) {
       const seen = new Set();
       const dayExs = prog.workout_templates.template_exercises
@@ -185,9 +200,14 @@ export default function MultiClientSessionScreen({ navigation }) {
           unit: client.unit_preference || unit || 'kg', is_pb: false,
         }))
       }));
+      exerciseNames = dayExs.map(e => e.exercise_name);
     }
 
-    // Fetch cycle phase if female
+    // Fetch previous logs for progression guide
+    const prevLogs = await fetchPreviousLogsForClient(client.id, exerciseNames);
+    setPreviousLogs(prev => ({ ...prev, [client.id]: prevLogs }));
+
+    // Cycle phase
     let cyclePhaseTag = null;
     if (client.gender === 'Female') {
       const { data: cycles } = await supabase
@@ -200,15 +220,8 @@ export default function MultiClientSessionScreen({ navigation }) {
       }
     }
 
-    return {
-      sets,
-      sessionNote: '',
-      savedStatus: false,
-      loading: false,
-      program: prog,
-      cyclePhaseTag,
-      day: d,
-    };
+    return { sets, sessionNote: '', savedStatus: false, loading: false,
+      program: prog, cyclePhaseTag, day: d };
   }
 
   async function confirmClientSelection() {
@@ -238,12 +251,9 @@ export default function MultiClientSessionScreen({ navigation }) {
     });
   }
 
-  // ── SESSION DATA HELPERS ──────────────────────────────
+  // ── SESSION HELPERS ───────────────────────────────────
 
-  function getActiveClient() {
-    return selectedClients[activeClientIdx];
-  }
-
+  function getActiveClient() { return selectedClients[activeClientIdx]; }
   function getActiveSession() {
     const client = getActiveClient();
     return client ? clientSessions[client.id] : null;
@@ -252,10 +262,36 @@ export default function MultiClientSessionScreen({ navigation }) {
   function updateActiveSession(updater) {
     const client = getActiveClient();
     if (!client) return;
-    setClientSessions(s => ({
-      ...s,
-      [client.id]: updater(s[client.id])
-    }));
+    setClientSessions(s => ({ ...s, [client.id]: updater(s[client.id]) }));
+  }
+
+  // ── PROGRESSIVE OVERLOAD ─────────────────────────────
+
+  function getProgressionSuggestion(clientId, exerciseName, prescribed) {
+    const clientLogs = previousLogs[clientId] || {};
+    const prev = clientLogs[exerciseName];
+    if (!prev || prev.length === 0) return null;
+
+    const prescribedRepsStr = prescribed?.prescribed_reps || '8';
+    const prescribedReps = parseInt(prescribedRepsStr.split('-')[0]) || 8;
+    const prescribedRepsMax = parseInt(prescribedRepsStr.split('-').pop()) || prescribedReps;
+    const prescribedSets = parseInt(prescribed?.prescribed_sets) || 3;
+    const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
+    const avgReps = prev.reduce((s, l) => s + (l.reps || 0), 0) / prev.length;
+
+    let suggestion = '', suggestionColor = COLORS.success, actionType = '';
+    if (avgReps >= prescribedRepsMax) {
+      const addWeight = unit === 'lbs' ? 5 : 2.5;
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add weight: try ${prescribedSets}×${prescribedReps} @ ${toDisplay(maxWeight + addWeight, unit)}${ul}`;
+      suggestionColor = '#FFE66D'; actionType = 'weight';
+    } else if (avgReps >= prescribedReps) {
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add rep: try ${prescribedSets}×${Math.round(avgReps) + 1} @ ${toDisplay(maxWeight, unit)}${ul}`;
+      suggestionColor = COLORS.success; actionType = 'reps';
+    } else {
+      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Consolidate: same weight`;
+      suggestionColor = '#FF9F43'; actionType = 'consolidate';
+    }
+    return { suggestion, suggestionColor, actionType };
   }
 
   // ── SET MANAGEMENT ───────────────────────────────────
@@ -312,6 +348,16 @@ export default function MultiClientSessionScreen({ navigation }) {
         entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }]
       }]
     }));
+    // Fetch previous logs for new exercise
+    const client = getActiveClient();
+    if (client) {
+      fetchPreviousLogsForClient(client.id, [newEx.name.trim()]).then(logs => {
+        setPreviousLogs(prev => ({
+          ...prev,
+          [client.id]: { ...(prev[client.id] || {}), ...logs }
+        }));
+      });
+    }
     setNewEx({ name: '', muscle_group: 'Chest' });
     setShowAddEx(false);
   }
@@ -332,7 +378,6 @@ export default function MultiClientSessionScreen({ navigation }) {
       ...s,
       [client.id]: { ...updated, loading: false }
     }));
-    setSessionDay(newDay);
   }
 
   // ── SAVE ─────────────────────────────────────────────
@@ -405,9 +450,7 @@ export default function MultiClientSessionScreen({ navigation }) {
     setSavingAll(true);
     for (const client of selectedClients) {
       const session = clientSessions[client.id];
-      if (!session?.savedStatus) {
-        await saveClientWorkout(client);
-      }
+      if (!session?.savedStatus) await saveClientWorkout(client);
     }
     setSavingAll(false);
     const allSaved = selectedClients.every(c => clientSessions[c.id]?.savedStatus);
@@ -475,8 +518,10 @@ export default function MultiClientSessionScreen({ navigation }) {
             return (
               <TouchableOpacity key={client.id}
                 style={[styles.clientPickerRow,
-                  isSelected && { borderColor: CLIENT_COLORS[selIdx] || COLORS.roseGold,
-                    backgroundColor: (CLIENT_COLORS[selIdx] || COLORS.roseGold) + '11' }]}
+                  isSelected && {
+                    borderColor: CLIENT_COLORS[selIdx] || COLORS.roseGold,
+                    backgroundColor: (CLIENT_COLORS[selIdx] || COLORS.roseGold) + '11'
+                  }]}
                 onPress={() => toggleClientSelect(client)}>
                 <View style={[styles.clientPickerAvatar, {
                   backgroundColor: isSelected
@@ -507,17 +552,17 @@ export default function MultiClientSessionScreen({ navigation }) {
           })}
 
           <TouchableOpacity
-            style={[styles.startSessionBtn,
-              selectedClients.length === 0 && { opacity: 0.5 }]}
+            style={[styles.startSessionBtn, selectedClients.length === 0 && { opacity: 0.5 }]}
             onPress={confirmClientSelection}
             disabled={selectedClients.length === 0 || loadingClients}>
             <Text style={styles.startSessionBtnText}>
-              {loadingClients ? 'Loading Programs...' : `▶ Start Session (${selectedClients.length} clients)`}
+              {loadingClients
+                ? 'Loading Programs...'
+                : `▶ Start Session (${selectedClients.length} clients)`}
             </Text>
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Date picker modal */}
         <Modal visible={showDatePicker} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
@@ -545,11 +590,13 @@ export default function MultiClientSessionScreen({ navigation }) {
 
   const activeClient = getActiveClient();
   const activeSession = getActiveSession();
+  const activeClientId = activeClient?.id;
+  const activeColor = CLIENT_COLORS[activeClientIdx] || COLORS.roseGold;
 
   return (
     <View style={styles.container}>
 
-      {/* Client tabs */}
+      {/* ── CLIENT TABS ── */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false}
         style={styles.clientTabsBar}
         contentContainerStyle={styles.clientTabsContent}>
@@ -559,7 +606,8 @@ export default function MultiClientSessionScreen({ navigation }) {
           const color = CLIENT_COLORS[idx] || COLORS.roseGold;
           return (
             <TouchableOpacity key={client.id}
-              style={[styles.clientTab, isActive && { borderBottomColor: color, borderBottomWidth: 3 }]}
+              style={[styles.clientTab,
+                isActive && { borderBottomColor: color, borderBottomWidth: 3 }]}
               onPress={() => setActiveClientIdx(idx)}>
               <View style={[styles.clientTabAvatar, { backgroundColor: color + '33' }]}>
                 <Text style={[styles.clientTabAvatarText, { color }]}>
@@ -569,33 +617,44 @@ export default function MultiClientSessionScreen({ navigation }) {
               <Text style={[styles.clientTabName, isActive && { color }]}>
                 {client.name.split(' ')[0]}
               </Text>
-              {session?.savedStatus && (
-                <Text style={styles.clientTabSaved}>✅</Text>
-              )}
-              {session?.loading && (
-                <ActivityIndicator size="small" color={color} />
-              )}
+              {session?.savedStatus && <Text style={styles.clientTabSaved}>✅</Text>}
+              {session?.loading && <ActivityIndicator size="small" color={color} />}
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      {/* Date + day bar */}
-      <View style={styles.sessionBar}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.sessionBarText}>
-            {activeSession?.day || sessionDay} · {sessionDate}
+      {/* ── SESSION INFO BAR ── fixed layout, no overlap */}
+      <View style={styles.sessionInfoBar}>
+        <View style={styles.sessionInfoLeft}>
+          <Text style={styles.sessionInfoDate}>📅 {sessionDate}</Text>
+          <Text style={[styles.sessionInfoDay, { color: activeColor }]}>
+            {activeSession?.day || sessionDay}
           </Text>
           {activeSession?.cyclePhaseTag && (
-            <Text style={[styles.sessionCycleTag, { color: '#FF9F43' }]}>
+            <Text style={styles.sessionCycleTag}>
               🌸 {activeSession.cyclePhaseTag}
             </Text>
           )}
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <TouchableOpacity style={styles.changeDateBtn}
+          onPress={() => setShowDatePicker(true)}>
+          <Text style={styles.changeDateBtnText}>📅 Change</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── DAY SELECTOR ── separate row, no overlap */}
+      <View style={styles.dayRow}>
+        <Text style={styles.dayRowLabel}>Day:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dayRowContent}>
           {DAYS.map(d => (
             <TouchableOpacity key={d}
-              style={[styles.dayChip, (activeSession?.day || sessionDay) === d && styles.dayChipActive]}
+              style={[styles.dayChip,
+                (activeSession?.day || sessionDay) === d && {
+                  backgroundColor: activeColor,
+                  borderColor: activeColor,
+                }]}
               onPress={() => changeDay(d)}>
               <Text style={[styles.dayChipText,
                 (activeSession?.day || sessionDay) === d && styles.dayChipTextActive]}>
@@ -606,7 +665,7 @@ export default function MultiClientSessionScreen({ navigation }) {
         </ScrollView>
       </View>
 
-      {/* Main content */}
+      {/* ── MAIN CONTENT ── */}
       {activeSession?.loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color={COLORS.roseGold} size="large" />
@@ -615,7 +674,6 @@ export default function MultiClientSessionScreen({ navigation }) {
       ) : (
         <ScrollView contentContainerStyle={styles.sessionContent}>
 
-          {/* Session note */}
           <RNTextInput
             value={activeSession?.sessionNote || ''}
             onChangeText={updateSessionNote}
@@ -624,7 +682,6 @@ export default function MultiClientSessionScreen({ navigation }) {
             placeholderTextColor={COLORS.textMuted}
             multiline />
 
-          {/* Exercises */}
           {(!activeSession?.sets || activeSession.sets.length === 0) && (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>No exercises for this day</Text>
@@ -632,90 +689,108 @@ export default function MultiClientSessionScreen({ navigation }) {
             </View>
           )}
 
-          {(activeSession?.sets || []).map((ex, exIdx) => (
-            <View key={exIdx} style={[styles.exerciseCard, {
-              borderLeftColor: CLIENT_COLORS[activeClientIdx] || COLORS.roseGold,
-              borderLeftWidth: 3,
-            }]}>
-              <View style={styles.exHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.exerciseName}>{ex.exercise_name}</Text>
-                  <Text style={styles.muscleGroup}>{ex.muscle_group}</Text>
-                  <Text style={styles.prescribedText}>
-                    Prescribed: {ex.prescribed_sets}×{ex.prescribed_reps}
-                  </Text>
+          {(activeSession?.sets || []).map((ex, exIdx) => {
+            const progression = getProgressionSuggestion(activeClientId, ex.exercise_name, ex);
+            return (
+              <View key={exIdx} style={[styles.exerciseCard, {
+                borderLeftColor: activeColor,
+                borderLeftWidth: 3,
+              }]}>
+                <View style={styles.exHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.exerciseName}>{ex.exercise_name}</Text>
+                    <Text style={styles.muscleGroup}>{ex.muscle_group}</Text>
+                    <Text style={styles.prescribedText}>
+                      Prescribed: {ex.prescribed_sets}×{ex.prescribed_reps}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => removeExercise(exIdx)}>
+                    <Text style={{ fontSize: 16 }}>🗑️</Text>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => removeExercise(exIdx)}>
-                  <Text style={{ fontSize: 16 }}>🗑️</Text>
-                </TouchableOpacity>
-              </View>
 
-              {ex.entries.map((entry, setIdx) => (
-                <View key={setIdx} style={styles.setCard}>
-                  <View style={styles.setCardHeader}>
-                    <View style={[styles.setNumBadge, {
-                      borderColor: CLIENT_COLORS[activeClientIdx] || COLORS.roseGold
-                    }]}>
-                      <Text style={[styles.setNumBadgeText, {
-                        color: CLIENT_COLORS[activeClientIdx] || COLORS.roseGold
-                      }]}>
-                        Set {setIdx + 1}
+                {/* Progressive overload guide */}
+                {progression && (
+                  <View style={[styles.progressionCard,
+                    { borderColor: progression.suggestionColor }]}>
+                    <View style={styles.progressionHeader}>
+                      <Text style={styles.progressionIcon}>
+                        {progression.actionType === 'weight' ? '⬆️'
+                          : progression.actionType === 'reps' ? '➕' : '🔄'}
+                      </Text>
+                      <Text style={styles.progressionTitle}>
+                        {progression.actionType === 'weight' ? 'Add weight!'
+                          : progression.actionType === 'reps' ? 'Add a rep!'
+                          : 'Consolidate'}
                       </Text>
                     </View>
-                    <View style={styles.setCardActions}>
-                      <TouchableOpacity
-                        style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
-                        onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-                        <Text style={styles.prBtnText}>
-                          {entry.is_pb ? '🏆 PR' : '○ PR'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.removeSetBtn}
-                        onPress={() => removeSet(exIdx, setIdx)}>
-                        <Text style={{ color: COLORS.error }}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={[styles.progressionText,
+                      { color: progression.suggestionColor }]}>
+                      {progression.suggestion}
+                    </Text>
                   </View>
-                  <View style={styles.setCardInputs}>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Weight</Text>
-                      <RNTextInput value={entry.weight}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                        style={styles.inputGroupField} placeholder="0"
-                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
-                    </View>
-                    <TouchableOpacity style={styles.unitToggle}
-                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
-                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
-                      <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Reps</Text>
-                      <RNTextInput value={entry.reps}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                        style={styles.inputGroupField} placeholder="0"
-                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
-                    </View>
-                  </View>
-                </View>
-              ))}
+                )}
 
-              <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
-                <Text style={styles.addSetBtnText}>+ Add Set</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+                {ex.entries.map((entry, setIdx) => (
+                  <View key={setIdx} style={styles.setCard}>
+                    <View style={styles.setCardHeader}>
+                      <View style={[styles.setNumBadge, { borderColor: activeColor }]}>
+                        <Text style={[styles.setNumBadgeText, { color: activeColor }]}>
+                          Set {setIdx + 1}
+                        </Text>
+                      </View>
+                      <View style={styles.setCardActions}>
+                        <TouchableOpacity
+                          style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                          onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                          <Text style={styles.prBtnText}>
+                            {entry.is_pb ? '🏆 PR' : '○ PR'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.removeSetBtn}
+                          onPress={() => removeSet(exIdx, setIdx)}>
+                          <Text style={{ color: COLORS.error }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <View style={styles.setCardInputs}>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Weight</Text>
+                        <RNTextInput value={entry.weight}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                          style={styles.inputGroupField} placeholder="0"
+                          placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                      </View>
+                      <TouchableOpacity style={styles.unitToggle}
+                        onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                          entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                        <Text style={styles.unitToggleText}>{entry.unit || 'kg'}</Text>
+                      </TouchableOpacity>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Reps</Text>
+                        <RNTextInput value={entry.reps}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                          style={styles.inputGroupField} placeholder="0"
+                          placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                      </View>
+                    </View>
+                  </View>
+                ))}
+
+                <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
+                  <Text style={styles.addSetBtnText}>+ Add Set</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
 
           <TouchableOpacity style={styles.addExBtn} onPress={() => setShowAddEx(true)}>
             <Text style={styles.addExBtnText}>➕ Add Exercise</Text>
           </TouchableOpacity>
 
-          {/* Save this client */}
           <TouchableOpacity
             style={[styles.saveClientBtn, {
-              backgroundColor: activeSession?.savedStatus
-                ? COLORS.success
-                : (CLIENT_COLORS[activeClientIdx] || COLORS.roseGold),
+              backgroundColor: activeSession?.savedStatus ? COLORS.success : activeColor,
               opacity: activeSession?.loading ? 0.6 : 1,
             }]}
             onPress={() => saveClientWorkout(activeClient)}
@@ -723,13 +798,11 @@ export default function MultiClientSessionScreen({ navigation }) {
             <Text style={styles.saveClientBtnText}>
               {activeSession?.savedStatus
                 ? `✅ ${activeClient?.name} Saved`
-                : activeSession?.loading
-                ? 'Saving...'
+                : activeSession?.loading ? 'Saving...'
                 : `💾 Save ${activeClient?.name}`}
             </Text>
           </TouchableOpacity>
 
-          {/* Save all */}
           <TouchableOpacity
             style={[styles.saveAllBtn, savingAll && { opacity: 0.6 }]}
             onPress={saveAllClients}
@@ -894,6 +967,27 @@ export default function MultiClientSessionScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* Date picker modal */}
+      <Modal visible={showDatePicker} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>📅 Session Date</Text>
+            <RNTextInput value={dateInput} onChangeText={setDateInput}
+              style={styles.modalInput} placeholder="YYYY-MM-DD"
+              placeholderTextColor={COLORS.textMuted} />
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancelBtn}
+                onPress={() => setShowDatePicker(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={confirmDate}>
+                <Text style={styles.modalSaveText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -919,20 +1013,26 @@ const styles = StyleSheet.create({
   clientPickerGoal: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   selectedBadge: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   selectedBadgeText: { color: COLORS.white, fontSize: 14, ...FONTS.bold },
-  startSessionBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginTop: 16, shadowColor: COLORS.roseGold, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
+  startSessionBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginTop: 16, elevation: 6 },
   startSessionBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
-  clientTabsBar: { backgroundColor: COLORS.darkCard, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder, maxHeight: 70 },
+  clientTabsBar: { backgroundColor: COLORS.darkCard, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder, maxHeight: 70, flexShrink: 0 },
   clientTabsContent: { paddingHorizontal: 12, paddingVertical: 8, gap: 4 },
   clientTab: { alignItems: 'center', paddingHorizontal: 16, paddingBottom: 6, borderBottomWidth: 3, borderBottomColor: 'transparent', minWidth: 80 },
   clientTabAvatar: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
   clientTabAvatarText: { fontSize: 14, ...FONTS.bold },
   clientTabName: { color: COLORS.textMuted, fontSize: SIZES.xs, ...FONTS.semibold },
   clientTabSaved: { fontSize: 10, marginTop: 2 },
-  sessionBar: { backgroundColor: COLORS.darkCard2, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder },
-  sessionBarText: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold },
-  sessionCycleTag: { fontSize: 9, marginTop: 2 },
-  dayChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, marginRight: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
-  dayChipActive: { backgroundColor: COLORS.roseGold, borderColor: COLORS.roseGold },
+  // Fixed session info bar — no overlap
+  sessionInfoBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard2, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder },
+  sessionInfoLeft: { flex: 1 },
+  sessionInfoDate: { color: COLORS.textMuted, fontSize: SIZES.xs },
+  sessionInfoDay: { fontSize: SIZES.md, ...FONTS.bold, marginTop: 1 },
+  sessionCycleTag: { color: '#FF9F43', fontSize: 10, marginTop: 2 },
+  // Day selector — own row
+  dayRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard, paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: COLORS.darkBorder },
+  dayRowLabel: { color: COLORS.textMuted, fontSize: SIZES.xs, ...FONTS.semibold, marginRight: 8, width: 28 },
+  dayRowContent: { gap: 6, flexDirection: 'row' },
+  dayChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, borderWidth: 1, borderColor: COLORS.darkBorder },
   dayChipText: { color: COLORS.textSecondary, fontSize: 10 },
   dayChipTextActive: { color: COLORS.white },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
@@ -947,6 +1047,11 @@ const styles = StyleSheet.create({
   exerciseName: { color: COLORS.white, fontSize: SIZES.md, ...FONTS.bold },
   muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.xs, marginTop: 2 },
   prescribedText: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
+  progressionCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, marginBottom: 10, borderWidth: 1, borderLeftWidth: 3 },
+  progressionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  progressionIcon: { fontSize: 14 },
+  progressionTitle: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold },
+  progressionText: { fontSize: SIZES.xs, lineHeight: 18 },
   setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
   setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   setNumBadge: { borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1 },

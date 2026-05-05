@@ -20,10 +20,12 @@ export default function TemplatesScreen() {
   // Edit template modal
   const [showEditModal, setShowEditModal] = useState(false);
   const [showExModal, setShowExModal] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
   const [editingTpl, setEditingTpl] = useState(null);
   const [editingExIdx, setEditingExIdx] = useState(null);
   const [tplName, setTplName] = useState('');
   const [exercises, setExercises] = useState([]);
+  const [bulkText, setBulkText] = useState('');
   const [exForm, setExForm] = useState({
     day: 'Monday', exercise_name: '', warmup_sets: '0',
     working_sets: '3', reps: '8-12', muscle_group: 'Chest',
@@ -118,19 +120,56 @@ export default function TemplatesScreen() {
     });
   }
 
+  // ── BULK PASTE ────────────────────────────────────────
+
+  function parseBulkExercises() {
+    if (!bulkText.trim()) { showAlert('Error', 'Paste some exercises first'); return; }
+    const lines = bulkText.split('\n').filter(l => l.trim());
+    const parsed = [];
+    const errors = [];
+    lines.forEach((line, i) => {
+      const parts = line.split('|').map(p => p.trim());
+      if (parts.length < 5) {
+        errors.push(`Line ${i + 1}: needs at least 5 parts (Day | Exercise | Warmup | Sets | Reps)`);
+        return;
+      }
+      const [day, exercise_name, warmup_sets, working_sets, reps, muscle_group] = parts;
+      if (!DAYS.includes(day)) {
+        errors.push(`Line ${i + 1}: invalid day "${day}" — use Monday, Tuesday, etc.`);
+        return;
+      }
+      if (!exercise_name?.trim()) {
+        errors.push(`Line ${i + 1}: exercise name is empty`);
+        return;
+      }
+      parsed.push({
+        day,
+        exercise_name: exercise_name.trim(),
+        warmup_sets: parseInt(warmup_sets) || 0,
+        working_sets: parseInt(working_sets) || 3,
+        reps: reps?.trim() || '8-12',
+        muscle_group: MUSCLE_GROUPS.includes(muscle_group?.trim())
+          ? muscle_group.trim() : 'Other',
+      });
+    });
+    if (errors.length > 0) {
+      showAlert('Parse Errors', errors.slice(0, 5).join('\n'));
+      if (parsed.length === 0) return;
+    }
+    if (parsed.length > 0) {
+      setExercises(e => [...e, ...parsed]);
+      setBulkText('');
+      setShowBulkModal(false);
+      showAlert('✅ Added!', `${parsed.length} exercise(s) added to the template.`);
+    }
+  }
+
   // ── BATCH MOVE ────────────────────────────────────────
 
   function toggleExSelection(idx) {
     setSelectedExIndices(s =>
       s.includes(idx) ? s.filter(i => i !== idx) : [...s, idx]
     );
-  }
-
-  function selectAllForDay(day) {
-    const indices = exercises
-      .map((ex, i) => ex.day === day ? i : -1)
-      .filter(i => i !== -1);
-    setSelectedExIndices(indices);
   }
 
   function selectAll() {
@@ -140,9 +179,7 @@ export default function TemplatesScreen() {
     setSelectedExIndices(filtered);
   }
 
-  function clearSelection() {
-    setSelectedExIndices([]);
-  }
+  function clearSelection() { setSelectedExIndices([]); }
 
   function applyBatchMove() {
     if (selectedExIndices.length === 0) {
@@ -199,7 +236,6 @@ export default function TemplatesScreen() {
       `Delete "${tpl.name}" and all ${tpl.template_exercises?.length || 0} exercises? This cannot be undone.`,
       async () => {
         setLoading(true);
-        // Cascade delete — exercises first, then template
         await supabase.from('template_exercises').delete().eq('template_id', tpl.id);
         const { error } = await supabase.from('workout_templates').delete().eq('id', tpl.id);
         setLoading(false);
@@ -247,10 +283,6 @@ export default function TemplatesScreen() {
     return g;
   };
 
-  const filteredExercises = batchFilterDay === 'All'
-    ? exercises
-    : exercises.filter(ex => ex.day === batchFilterDay);
-
   const filteredIndices = exercises
     .map((ex, i) => (batchFilterDay === 'All' || ex.day === batchFilterDay) ? i : -1)
     .filter(i => i !== -1);
@@ -258,9 +290,7 @@ export default function TemplatesScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.pageTitle}>Workout Templates</Text>
-      <Text style={styles.pageSub}>
-        Manage your workout program templates
-      </Text>
+      <Text style={styles.pageSub}>Manage your workout program templates</Text>
 
       {templates.length === 0 ? (
         <View style={styles.emptyCard}>
@@ -307,19 +337,22 @@ export default function TemplatesScreen() {
 
           {expandedId === tpl.id && (
             <View style={styles.preview}>
-              {Object.entries(groupByDay(tpl.template_exercises)).map(([day, exs]) => (
-                <View key={day} style={styles.dayGroup}>
-                  <Text style={styles.dayLabel}>{day}</Text>
-                  {exs.sort((a, b) => a.order_index - b.order_index).map((ex, i) => (
-                    <View key={i} style={styles.exRow}>
-                      <Text style={styles.exName}>{ex.exercise_name}</Text>
-                      <Text style={styles.exMeta}>
-                        {ex.working_sets}×{ex.reps} · {ex.muscle_group}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ))}
+              {Object.entries(groupByDay(tpl.template_exercises))
+                .sort(([a], [b]) => DAYS.indexOf(a) - DAYS.indexOf(b))
+                .map(([day, exs]) => (
+                  <View key={day} style={styles.dayGroup}>
+                    <Text style={styles.dayLabel}>{day}</Text>
+                    {exs.sort((a, b) => a.order_index - b.order_index).map((ex, i) => (
+                      <View key={i} style={styles.exRow}>
+                        <Text style={styles.exName}>{ex.exercise_name}</Text>
+                        <Text style={styles.exMeta}>
+                          {ex.working_sets}×{ex.reps} · {ex.muscle_group}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ))
+              }
             </View>
           )}
         </View>
@@ -348,7 +381,7 @@ export default function TemplatesScreen() {
                   }}>
                   <Text style={[styles.batchToggleBtnText,
                     batchMode && styles.batchToggleBtnTextActive]}>
-                    {batchMode ? '✕ Exit Batch Mode' : '📦 Batch Move Exercises'}
+                    {batchMode ? '✕ Exit Batch' : '📦 Batch Move'}
                   </Text>
                 </TouchableOpacity>
                 {batchMode && selectedExIndices.length > 0 && (
@@ -361,14 +394,12 @@ export default function TemplatesScreen() {
                 )}
               </View>
 
-              {/* Batch mode controls */}
+              {/* Batch controls */}
               {batchMode && (
                 <View style={styles.batchControls}>
                   <Text style={styles.batchHint}>
-                    Select exercises to move. Filter by day to select quickly.
+                    Tap exercises to select. Filter by day for quick selection.
                   </Text>
-
-                  {/* Day filter */}
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}
                     style={{ marginBottom: 8 }}>
                     {['All', ...DAYS].map(d => (
@@ -383,13 +414,9 @@ export default function TemplatesScreen() {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
-
-                  {/* Select all / clear */}
                   <View style={styles.batchSelectRow}>
                     <TouchableOpacity style={styles.batchSelectBtn} onPress={selectAll}>
-                      <Text style={styles.batchSelectBtnText}>
-                        Select All {batchFilterDay !== 'All' ? batchFilterDay : ''}
-                      </Text>
+                      <Text style={styles.batchSelectBtnText}>Select All</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.batchClearBtn} onPress={clearSelection}>
                       <Text style={styles.batchClearBtnText}>Clear</Text>
@@ -416,14 +443,12 @@ export default function TemplatesScreen() {
                     onPress={() => batchMode ? toggleExSelection(i) : openEditEx(i)}
                     activeOpacity={0.7}>
 
-                    {/* Batch checkbox */}
                     {batchMode && (
                       <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
                         {isSelected && <Text style={styles.checkboxTick}>✓</Text>}
                       </View>
                     )}
 
-                    {/* Reorder buttons (non-batch mode only) */}
                     {!batchMode && (
                       <View style={styles.exReorder}>
                         <TouchableOpacity onPress={() => moveEx(i, -1)}>
@@ -446,7 +471,6 @@ export default function TemplatesScreen() {
                       </Text>
                     </View>
 
-                    {/* Edit / delete (non-batch mode) */}
                     {!batchMode && (
                       <View style={styles.exItemActions}>
                         <TouchableOpacity style={styles.exEditBtn}
@@ -460,9 +484,9 @@ export default function TemplatesScreen() {
                       </View>
                     )}
 
-                    {/* Day badge in batch mode */}
                     {batchMode && (
-                      <View style={[styles.dayBadge, isSelected && { backgroundColor: COLORS.roseGold }]}>
+                      <View style={[styles.dayBadge,
+                        isSelected && { backgroundColor: COLORS.roseGold }]}>
                         <Text style={styles.dayBadgeText}>{ex.day.slice(0, 3)}</Text>
                       </View>
                     )}
@@ -470,9 +494,21 @@ export default function TemplatesScreen() {
                 );
               })}
 
-              <TouchableOpacity style={styles.addExBtn} onPress={openAddEx}>
-                <Text style={styles.addExBtnText}>➕ Add Exercise</Text>
-              </TouchableOpacity>
+              {/* Add exercise buttons */}
+              <View style={styles.addExRow}>
+                <TouchableOpacity
+                  style={[styles.addExBtn, { flex: 1 }]}
+                  onPress={openAddEx}>
+                  <Text style={styles.addExBtnText}>➕ Add One</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addExBtn, { flex: 1, borderColor: '#4ECDC4' }]}
+                  onPress={() => { setBulkText(''); setShowBulkModal(true); }}>
+                  <Text style={[styles.addExBtnText, { color: '#4ECDC4' }]}>
+                    📋 Bulk Paste
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
@@ -576,6 +612,59 @@ export default function TemplatesScreen() {
         </View>
       </Modal>
 
+      {/* ── BULK PASTE MODAL ── */}
+      <Modal visible={showBulkModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '92%' }]}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>📋 Bulk Paste Exercises</Text>
+
+              <View style={styles.bulkHelp}>
+                <Text style={styles.bulkHelpTitle}>Format — one exercise per line:</Text>
+                <Text style={styles.bulkHelpFormat}>
+                  Day | Exercise Name | Warmup Sets | Working Sets | Reps | Muscle Group
+                </Text>
+                <Text style={styles.bulkHelpNote}>
+                  Muscle Group is optional. Valid days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
+                </Text>
+                <View style={styles.bulkHelpExample}>
+                  <Text style={styles.bulkHelpExampleText}>
+                    Monday | Bench Press | 2 | 3 | 8-12 | Chest{'\n'}
+                    Monday | Incline DB Press | 0 | 3 | 10-12 | Chest{'\n'}
+                    Monday | Cable Fly | 0 | 3 | 12-15 | Chest{'\n'}
+                    Wednesday | Squat | 3 | 4 | 5 | Quads{'\n'}
+                    Wednesday | Romanian Deadlift | 2 | 3 | 8-10 | Hamstrings{'\n'}
+                    Friday | Deadlift | 2 | 3 | 5 | Back
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.modalLabel}>
+                Paste Exercises ({bulkText.split('\n').filter(l => l.trim()).length} lines)
+              </Text>
+              <RNTextInput
+                value={bulkText}
+                onChangeText={setBulkText}
+                style={styles.bulkInput}
+                placeholder={`Monday | Bench Press | 2 | 3 | 8-12 | Chest\nMonday | Incline DB Press | 0 | 3 | 10-12 | Chest`}
+                placeholderTextColor={COLORS.textMuted}
+                multiline />
+
+              <View style={styles.modalBtns}>
+                <TouchableOpacity style={styles.modalCancelBtn}
+                  onPress={() => setShowBulkModal(false)}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalSaveBtn}
+                  onPress={parseBulkExercises}>
+                  <Text style={styles.modalSaveText}>⚡ Parse & Add</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── BATCH MOVE MODAL ── */}
       <Modal visible={showBatchMoveModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
@@ -599,7 +688,6 @@ export default function TemplatesScreen() {
               ))}
             </View>
 
-            {/* Preview selected exercises */}
             <View style={styles.batchPreview}>
               <Text style={styles.batchPreviewTitle}>Selected exercises:</Text>
               {selectedExIndices.slice(0, 5).map(i => (
@@ -620,9 +708,7 @@ export default function TemplatesScreen() {
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalSaveBtn} onPress={applyBatchMove}>
-                <Text style={styles.modalSaveText}>
-                  Move to {batchTargetDay}
-                </Text>
+                <Text style={styles.modalSaveText}>Move to {batchTargetDay}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -683,8 +769,16 @@ const styles = StyleSheet.create({
   exItemActions: { flexDirection: 'row', gap: 4 },
   exEditBtn: { padding: 6, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm },
   exDeleteBtn: { padding: 6, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.sm },
-  addExBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid },
-  addExBtnText: { color: COLORS.roseGold, ...FONTS.bold },
+  addExRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  addExBtn: { borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: COLORS.roseGoldMid, backgroundColor: COLORS.roseGoldFaint },
+  addExBtnText: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.sm },
+  bulkHelp: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  bulkHelpTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6 },
+  bulkHelpFormat: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold, marginBottom: 4 },
+  bulkHelpNote: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 8 },
+  bulkHelpExample: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.sm, padding: 10, borderWidth: 1, borderColor: COLORS.darkBorder },
+  bulkHelpExampleText: { color: '#4ECDC4', fontSize: SIZES.xs, lineHeight: 18 },
+  bulkInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, minHeight: 180, textAlignVertical: 'top', marginBottom: 8 },
   batchToolbar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   batchToggleBtn: { flex: 1, paddingVertical: 10, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard2, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
   batchToggleBtnActive: { backgroundColor: COLORS.roseGoldFaint, borderColor: COLORS.roseGold },
@@ -699,9 +793,9 @@ const styles = StyleSheet.create({
   dayFilterChipText: { color: COLORS.textSecondary, fontSize: SIZES.xs },
   dayFilterChipTextActive: { color: COLORS.white },
   batchSelectRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  batchSelectBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  batchSelectBtn: { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   batchSelectBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
-  batchClearBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.darkBorder },
+  batchClearBtn: { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: COLORS.darkCard, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.darkBorder },
   batchClearBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs },
   batchCount: { color: COLORS.textMuted, fontSize: SIZES.xs, marginLeft: 'auto' },
   checkbox: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: COLORS.darkBorder, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.darkCard },
