@@ -440,31 +440,37 @@ export default function CoachHealthScreen({ route, navigation }) {
       fats: acc.fats + (e.fats_g || 0),
       calories: acc.calories + (e.calories || 0),
     }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
+
     let planId;
     if (editingPlan) {
-      await supabase.from('meal_plan_templates').update({
+      const { error } = await supabase.from('meal_plan_templates').update({
         name: planName.trim(), description: planDesc.trim() || null,
         goal: planGoal || null, is_shared: planIsShared,
         total_calories: totals.calories, total_protein_g: totals.protein,
         total_carbs_g: totals.carbs, total_fats_g: totals.fats,
       }).eq('id', editingPlan.id);
+      if (error) { setLoading(false); showAlert('Error', error.message); return; }
       await supabase.from('meal_plan_items').delete().eq('template_id', editingPlan.id);
       planId = editingPlan.id;
     } else {
-      const { data } = await supabase.from('meal_plan_templates').insert({
+      const { data, error } = await supabase.from('meal_plan_templates').insert({
         name: planName.trim(), description: planDesc.trim() || null,
         goal: planGoal || null, is_shared: planIsShared,
         client_id: client.id, created_by: profile.id,
         total_calories: totals.calories, total_protein_g: totals.protein,
         total_carbs_g: totals.carbs, total_fats_g: totals.fats,
       }).select().single();
+      if (error) { setLoading(false); showAlert('Error', error.message); return; }
       planId = data?.id;
     }
+
     if (planId) {
-      await supabase.from('meal_plan_items').insert(
+      const { error: itemsError } = await supabase.from('meal_plan_items').insert(
         planItems.map((item, i) => ({ ...item, template_id: planId, order_index: i }))
       );
+      if (itemsError) { setLoading(false); showAlert('Error', itemsError.message); return; }
     }
+
     setLoading(false);
     setShowMealPlanModal(false);
     showAlert('✅ Meal Plan Saved!', `"${planName}" has been saved.`);
@@ -511,9 +517,15 @@ export default function CoachHealthScreen({ route, navigation }) {
 
   function openNewCarbCycle() {
     setEditingCarbPlan(null);
-    setCcName(''); setCcDesc('');
-    setCcWeeklyCals(''); setCcProtein(''); setCcFats('');
-    setCcRatioHigh('3'); setCcRatioMed('2'); setCcRatioLow('1');
+    setCcName('');
+    setCcDesc('');
+    // Auto-populate from client's macro targets
+    setCcWeeklyCals(macroTargets ? String(Math.round(macroTargets.calories * 7)) : '');
+    setCcProtein(macroTargets ? String(Math.round(macroTargets.protein_g)) : '');
+    setCcFats(macroTargets ? String(Math.round(macroTargets.fats_g)) : '');
+    setCcRatioHigh('3');
+    setCcRatioMed('2');
+    setCcRatioLow('1');
     setCcDayTypes({
       Monday: 'none', Tuesday: 'none', Wednesday: 'none',
       Thursday: 'none', Friday: 'none', Saturday: 'none', Sunday: 'none'
@@ -532,8 +544,10 @@ export default function CoachHealthScreen({ route, navigation }) {
     setCcRatioHigh(String(plan.carb_ratio_high || 3));
     setCcRatioMed(String(plan.carb_ratio_medium || 2));
     setCcRatioLow(String(plan.carb_ratio_low || 1));
-    const dayTypes = { Monday: 'none', Tuesday: 'none', Wednesday: 'none',
-      Thursday: 'none', Friday: 'none', Saturday: 'none', Sunday: 'none' };
+    const dayTypes = {
+      Monday: 'none', Tuesday: 'none', Wednesday: 'none',
+      Thursday: 'none', Friday: 'none', Saturday: 'none', Sunday: 'none'
+    };
     (plan.high_carb_days || []).forEach(d => { dayTypes[d] = 'high'; });
     (plan.medium_carb_days || []).forEach(d => { dayTypes[d] = 'medium'; });
     (plan.low_carb_days || []).forEach(d => { dayTypes[d] = 'low'; });
@@ -546,6 +560,11 @@ export default function CoachHealthScreen({ route, navigation }) {
       medCarbG: plan.medium_carb_g,
       lowCarbG: plan.low_carb_g,
       weeklyCals: plan.weekly_calories,
+      proteinG: plan.protein_g_daily,
+      fatsG: plan.fats_g_daily,
+      highDays: plan.high_carb_days || [],
+      medDays: plan.medium_carb_days || [],
+      lowDays: plan.low_carb_days || [],
     });
     setShowCarbCycleModal(true);
   }
@@ -571,7 +590,6 @@ export default function CoachHealthScreen({ route, navigation }) {
       showAlert('Error', 'Assign at least one day a carb type (H/M/L)'); return;
     }
 
-    // Fixed daily cals from protein + fats
     const fixedDailyCals = (protein * 4) + (fats * 9);
     const fixedWeeklyCals = fixedDailyCals * 7;
     const remainingWeeklyCarbCals = weeklyCals - fixedWeeklyCals;
@@ -580,7 +598,6 @@ export default function CoachHealthScreen({ route, navigation }) {
       showAlert('Error', 'Weekly calories too low — protein + fats already exceed weekly target'); return;
     }
 
-    // Solve: highDays×(ratioH×x) + medDays×(ratioM×x) + lowDays×(ratioL×x) = remainingWeeklyCarbCals
     const denominator = (highDays.length * ratioH) + (medDays.length * ratioM) + (lowDays.length * ratioL);
     const x = remainingWeeklyCarbCals / denominator;
 
@@ -596,7 +613,6 @@ export default function CoachHealthScreen({ route, navigation }) {
     const medTotalCals = Math.round(medCarbCals + fixedDailyCals);
     const lowTotalCals = Math.round(lowCarbCals + fixedDailyCals);
 
-    // Verify weekly total
     const computedWeekly = (highDays.length * highTotalCals) +
       (medDays.length * medTotalCals) + (lowDays.length * lowTotalCals) +
       ((7 - activeDays) * fixedDailyCals);
@@ -674,6 +690,34 @@ export default function CoachHealthScreen({ route, navigation }) {
     return { plan: activePlan, dayType, carbG, cals, todayName };
   }
 
+  // ── TDEE → CARB CYCLE integration ────────────────────
+
+  function applyTdeeToCarb() {
+    let protein, fats, targetCals;
+    if (tdeeMacroMode === 'percent') {
+      const m = getMacrosFromPercents();
+      protein = m.p; fats = m.f; targetCals = tdeeResult?.targetCals || 0;
+    } else {
+      protein = parseFloat(tdeeProteinG) || 0;
+      fats = parseFloat(tdeeFatsG) || 0;
+      targetCals = Math.round(protein * 4 + (parseFloat(tdeeCarbsG) || 0) * 4 + fats * 9);
+    }
+    setTab('carbcycle');
+    setEditingCarbPlan(null);
+    setCcName(`${client.name} Carb Cycle`);
+    setCcDesc(`Based on TDEE: ${tdeeResult?.targetCals || targetCals} kcal/day`);
+    setCcWeeklyCals(String(Math.round(targetCals * 7)));
+    setCcProtein(String(Math.round(protein)));
+    setCcFats(String(Math.round(fats)));
+    setCcRatioHigh('3'); setCcRatioMed('2'); setCcRatioLow('1');
+    setCcDayTypes({
+      Monday: 'none', Tuesday: 'none', Wednesday: 'none',
+      Thursday: 'none', Friday: 'none', Saturday: 'none', Sunday: 'none'
+    });
+    setCcResult(null);
+    setShowCarbCycleModal(true);
+  }
+
   // ── CYCLE EDIT / RETAG ────────────────────────────────
 
   function openEditCycle(cycle) {
@@ -707,9 +751,7 @@ export default function CoachHealthScreen({ route, navigation }) {
   }
 
   async function deleteCycleEntry(cycle) {
-    showConfirm(
-      'Delete Cycle Entry',
-      `Delete cycle starting ${cycle.cycle_start_date}?`,
+    showConfirm('Delete Cycle Entry', `Delete cycle starting ${cycle.cycle_start_date}?`,
       async () => {
         setRetagging(true);
         const endDate = new Date(
@@ -725,8 +767,7 @@ export default function CoachHealthScreen({ route, navigation }) {
         setRetagging(false);
         fetchAll();
         showAlert('🗑️ Deleted', 'Cycle entry removed and phase tags cleared.');
-      },
-      null, 'Delete', true
+      }, null, 'Delete', true
     );
   }
 
@@ -873,6 +914,7 @@ export default function CoachHealthScreen({ route, navigation }) {
   const tabs = ['weight', 'macros', 'food', 'mealplans', 'carbcycle', 'tdee', 'feedback', ...(isFemale ? ['cycle'] : [])];
   const tabLabels = ['⚖️ Weight', '🥗 Macros', '🍽️ Food Log', '📋 Meal Plans', '🔄 Carb Cycle', '🔢 TDEE', '💬 Feedback', ...(isFemale ? ['🌸 Cycle'] : [])];
   const todayCarbTargets = getTodayCarbCycleTargets();
+  const activeCarbPlan = carbCyclePlans.find(p => p.is_active);
 
   return (
     <View style={styles.container}>
@@ -1205,7 +1247,6 @@ export default function CoachHealthScreen({ route, navigation }) {
         {/* ═══ CARB CYCLE TAB ═══ */}
         {tab === 'carbcycle' && (
           <View>
-            {/* Today's targets banner */}
             {todayCarbTargets && todayCarbTargets.dayType !== 'none' && (
               <View style={[styles.ccTodayCard, {
                 borderColor: CC_DAY_COLORS[todayCarbTargets.dayType]
@@ -1255,6 +1296,14 @@ export default function CoachHealthScreen({ route, navigation }) {
               <Text style={styles.actionBtnText}>🔄 Create Carb Cycling Plan</Text>
             </TouchableOpacity>
 
+            {!macroTargets && (
+              <View style={styles.ccNoTargetsWarning}>
+                <Text style={styles.ccNoTargetsText}>
+                  ⚠️ No macro targets set for {client.name}. Set targets first via the Macros tab or TDEE tab — carb cycling will auto-populate from them.
+                </Text>
+              </View>
+            )}
+
             {carbCyclePlans.length === 0
               ? <View style={styles.empty}>
                   <Text style={styles.emptyText}>No carb cycling plans yet</Text>
@@ -1289,7 +1338,6 @@ export default function CoachHealthScreen({ route, navigation }) {
 
                       {isExpanded && (
                         <View style={styles.planExpanded}>
-                          {/* Weekly day overview */}
                           <Text style={styles.ccWeekTitle}>📅 Weekly Schedule</Text>
                           <View style={styles.ccWeekGrid}>
                             {DAYS_ORDERED.map(day => {
@@ -1314,18 +1362,13 @@ export default function CoachHealthScreen({ route, navigation }) {
                                   }]}>
                                     {CC_DAY_LABELS[dayType]}
                                   </Text>
-                                  {carbG && (
-                                    <Text style={styles.ccDayCarbG}>{carbG}g C</Text>
-                                  )}
-                                  {cals && (
-                                    <Text style={styles.ccDayCals}>{cals} kcal</Text>
-                                  )}
+                                  {carbG && <Text style={styles.ccDayCarbG}>{carbG}g C</Text>}
+                                  {cals && <Text style={styles.ccDayCals}>{cals} kcal</Text>}
                                 </View>
                               );
                             })}
                           </View>
 
-                          {/* Per-type summary */}
                           <View style={styles.ccSummaryRow}>
                             {[
                               { type: 'high', label: 'High Carb', carbG: plan.high_carb_g, cals: plan.high_carb_calories, days: plan.high_carb_days },
@@ -1358,7 +1401,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                                   .update({ is_active: true })
                                   .eq('id', plan.id);
                                 fetchAll();
-                                showAlert('✅ Activated!', `"${plan.name}" is now the active carb cycle plan.`);
+                                showAlert('✅ Activated!', `"${plan.name}" is now active.`);
                               }}>
                               <Text style={styles.planApplyBtnText}>
                                 {plan.is_active ? '✅ Active' : '▶ Set Active'}
@@ -1431,6 +1474,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                 </TouchableOpacity>
               ))}
             </View>
+
             <View style={styles.tdeeCard}>
               <Text style={styles.tdeeCardTitle}>🎯 Goal</Text>
               <View style={styles.tdeeGoalRow}>
@@ -1493,6 +1537,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                 <Text style={styles.tdeeCalcBtnText}>⚡ Calculate TDEE</Text>
               </TouchableOpacity>
             </View>
+
             {tdeeResult && (
               <View style={styles.tdeeResultCard}>
                 <Text style={styles.tdeeCardTitle}>📊 Results</Text>
@@ -1600,11 +1645,22 @@ export default function CoachHealthScreen({ route, navigation }) {
                     </Text>
                   </View>
                 )}
+
+                {/* Action buttons */}
                 <TouchableOpacity
                   style={[styles.tdeeApplyBtn, loading && { opacity: 0.6 }]}
                   onPress={applyTdeeAsTargets} disabled={loading}>
                   <Text style={styles.tdeeApplyBtnText}>
                     {loading ? 'Applying...' : `✅ Apply as Macro Targets for ${client.name}`}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* NEW: Apply to Carb Cycle */}
+                <TouchableOpacity
+                  style={styles.tdeeCarbCycleBtn}
+                  onPress={applyTdeeToCarb}>
+                  <Text style={styles.tdeeCarbCycleBtnText}>
+                    🔄 Create Carb Cycle from this TDEE
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2041,6 +2097,51 @@ export default function CoachHealthScreen({ route, navigation }) {
               <Text style={styles.modalTitle}>
                 {editingPlan ? '✏️ Edit Meal Plan' : '📋 New Meal Plan'}
               </Text>
+
+              {/* Macro targets guide */}
+              {macroTargets && (
+                <View style={styles.mpTargetGuide}>
+                  <Text style={styles.mpTargetGuideTitle}>📊 Client's Daily Targets</Text>
+                  <View style={styles.mpTargetGuideRow}>
+                    {[
+                      { label: 'P', val: macroTargets.protein_g, color: '#FF6B6B' },
+                      { label: 'C', val: macroTargets.carbs_g, color: '#4ECDC4' },
+                      { label: 'F', val: macroTargets.fats_g, color: '#FFE66D' },
+                      { label: 'kcal', val: macroTargets.calories, color: COLORS.roseGold },
+                    ].map(m => (
+                      <View key={m.label} style={[styles.mpTargetPill, { borderColor: m.color }]}>
+                        <Text style={[styles.mpTargetVal, { color: m.color }]}>{m.val}</Text>
+                        <Text style={styles.mpTargetLabel}>{m.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Carb cycle guide if active */}
+              {activeCarbPlan && (
+                <View style={styles.mpCarbCycleGuide}>
+                  <Text style={styles.mpTargetGuideTitle}>🔄 Active Carb Cycle: {activeCarbPlan.name}</Text>
+                  {[
+                    { type: 'high', label: 'High Day', carbG: activeCarbPlan.high_carb_g, cals: activeCarbPlan.high_carb_calories, days: activeCarbPlan.high_carb_days },
+                    { type: 'medium', label: 'Med Day', carbG: activeCarbPlan.medium_carb_g, cals: activeCarbPlan.medium_carb_calories, days: activeCarbPlan.medium_carb_days },
+                    { type: 'low', label: 'Low Day', carbG: activeCarbPlan.low_carb_g, cals: activeCarbPlan.low_carb_calories, days: activeCarbPlan.low_carb_days },
+                  ].filter(t => (t.days || []).length > 0).map(t => (
+                    <View key={t.type} style={styles.mpCarbCycleRow}>
+                      <Text style={[styles.mpCarbCycleType, { color: CC_DAY_COLORS[t.type] }]}>
+                        {t.label}
+                      </Text>
+                      <Text style={styles.mpCarbCycleVal}>
+                        C:{t.carbG}g · P:{activeCarbPlan.protein_g_daily}g · F:{activeCarbPlan.fats_g_daily}g · {t.cals}kcal
+                      </Text>
+                      <Text style={styles.mpCarbCycleDays}>
+                        {(t.days || []).map(d => d.slice(0,3)).join(' ')}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               <Text style={styles.modalLabel}>Plan Name *</Text>
               <RNTextInput value={planName} onChangeText={setPlanName}
                 style={styles.modalInput} placeholder="e.g. Cutting Day A"
@@ -2252,7 +2353,7 @@ export default function CoachHealthScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* ═══ CARB CYCLING CREATE/EDIT MODAL ═══ */}
+      {/* ═══ CARB CYCLING MODAL ═══ */}
       <Modal visible={showCarbCycleModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { maxHeight: '95%' }]}>
@@ -2261,17 +2362,23 @@ export default function CoachHealthScreen({ route, navigation }) {
                 {editingCarbPlan ? '✏️ Edit Carb Cycle' : '🔄 New Carb Cycling Plan'}
               </Text>
 
+              {macroTargets && !editingCarbPlan && (
+                <View style={styles.ccAutoFillNote}>
+                  <Text style={styles.ccAutoFillNoteText}>
+                    ✅ Auto-filled from {client.name}'s macro targets ({macroTargets.calories} kcal/day). Edit if needed.
+                  </Text>
+                </View>
+              )}
+
               <Text style={styles.modalLabel}>Plan Name *</Text>
               <RNTextInput value={ccName} onChangeText={setCcName}
                 style={styles.modalInput} placeholder="e.g. Week 1 Carb Cycle"
                 placeholderTextColor={COLORS.textMuted} />
-
               <Text style={styles.modalLabel}>Description (optional)</Text>
               <RNTextInput value={ccDesc} onChangeText={setCcDesc}
-                style={styles.modalInput} placeholder="e.g. Cutting phase carb cycle"
+                style={styles.modalInput} placeholder="e.g. Cutting phase"
                 placeholderTextColor={COLORS.textMuted} />
 
-              {/* Step 1: Weekly calories + macros */}
               <View style={styles.ccSection}>
                 <Text style={styles.ccSectionTitle}>Step 1 — Weekly Targets</Text>
                 <Text style={styles.modalLabel}>Weekly Calories (total for 7 days)</Text>
@@ -2300,16 +2407,14 @@ export default function CoachHealthScreen({ route, navigation }) {
                 {ccProtein && ccFats && (
                   <Text style={styles.ccFixedNote}>
                     Fixed daily: {Math.round((parseFloat(ccProtein)||0)*4 + (parseFloat(ccFats)||0)*9)} kcal
-                    (protein + fats, constant every day)
                   </Text>
                 )}
               </View>
 
-              {/* Step 2: Day assignment */}
               <View style={styles.ccSection}>
                 <Text style={styles.ccSectionTitle}>Step 2 — Assign Day Types</Text>
                 <Text style={styles.ccSectionNote}>
-                  H = High Carb (training day) · M = Medium Carb · L = Low Carb · — = Rest/off
+                  H = High Carb · M = Medium Carb · L = Low Carb · — = Rest/off
                 </Text>
                 {DAYS_ORDERED.map(day => (
                   <View key={day} style={styles.ccDayRow}>
@@ -2335,11 +2440,10 @@ export default function CoachHealthScreen({ route, navigation }) {
                 ))}
               </View>
 
-              {/* Step 3: Carb ratios */}
               <View style={styles.ccSection}>
                 <Text style={styles.ccSectionTitle}>Step 3 — Carb Ratios (optional)</Text>
                 <Text style={styles.ccSectionNote}>
-                  Controls how carbs are distributed. Default 3:2:1 means high day has 3× more carbs than low.
+                  Default 3:2:1 — high day has 3× more carbs than low day.
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   {[
@@ -2358,12 +2462,10 @@ export default function CoachHealthScreen({ route, navigation }) {
                 </View>
               </View>
 
-              {/* Compute button */}
               <TouchableOpacity style={styles.ccComputeBtn} onPress={computeCarbCycle}>
                 <Text style={styles.ccComputeBtnText}>⚡ Compute Carb Cycle</Text>
               </TouchableOpacity>
 
-              {/* Results */}
               {ccResult && (
                 <View style={styles.ccResultCard}>
                   <Text style={styles.ccResultTitle}>📊 Computed Plan</Text>
@@ -2371,8 +2473,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                     color: Math.abs(ccResult.weeklyCals - parseFloat(ccWeeklyCals)) < 50
                       ? COLORS.success : '#FFB347'
                   }]}>
-                    Weekly total: {ccResult.weeklyCals} kcal
-                    (target: {ccWeeklyCals})
+                    Weekly total: {ccResult.weeklyCals} kcal (target: {ccWeeklyCals})
                   </Text>
                   <View style={styles.ccResultGrid}>
                     {[
@@ -2387,15 +2488,9 @@ export default function CoachHealthScreen({ route, navigation }) {
                         <Text style={[styles.ccResultItemTitle, { color: CC_DAY_COLORS[t.type] }]}>
                           {t.label}
                         </Text>
-                        <Text style={styles.ccResultItemMacro}>
-                          Carbs: {t.carbG}g
-                        </Text>
-                        <Text style={styles.ccResultItemMacro}>
-                          Protein: {ccResult.proteinG}g
-                        </Text>
-                        <Text style={styles.ccResultItemMacro}>
-                          Fats: {ccResult.fatsG}g
-                        </Text>
+                        <Text style={styles.ccResultItemMacro}>Carbs: {t.carbG}g</Text>
+                        <Text style={styles.ccResultItemMacro}>Protein: {ccResult.proteinG}g</Text>
+                        <Text style={styles.ccResultItemMacro}>Fats: {ccResult.fatsG}g</Text>
                         <Text style={[styles.ccResultItemCals, { color: CC_DAY_COLORS[t.type] }]}>
                           {t.cals} kcal
                         </Text>
@@ -2600,7 +2695,17 @@ const styles = StyleSheet.create({
   replaceDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   applyPlanSummary: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   applyPlanSummaryText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.semibold },
-  // Carb cycling styles
+  mpTargetGuide: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  mpTargetGuideTitle: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
+  mpTargetGuideRow: { flexDirection: 'row', gap: 8 },
+  mpTargetPill: { flex: 1, borderRadius: RADIUS.md, padding: 8, alignItems: 'center', borderWidth: 1, backgroundColor: COLORS.darkCard },
+  mpTargetVal: { fontSize: SIZES.md, ...FONTS.bold },
+  mpTargetLabel: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
+  mpCarbCycleGuide: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  mpCarbCycleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 6, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
+  mpCarbCycleType: { width: 60, fontSize: SIZES.xs, ...FONTS.bold },
+  mpCarbCycleVal: { flex: 1, color: COLORS.white, fontSize: SIZES.xs },
+  mpCarbCycleDays: { color: COLORS.textMuted, fontSize: 9 },
   ccTodayCard: { borderRadius: RADIUS.lg, padding: 16, marginBottom: 16, borderWidth: 2, backgroundColor: COLORS.darkCard },
   ccTodayTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 8 },
   ccDayTypeBadge: { borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 12 },
@@ -2609,6 +2714,8 @@ const styles = StyleSheet.create({
   ccMacroPill: { flex: 1, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
   ccMacroPillVal: { fontSize: SIZES.lg, ...FONTS.bold },
   ccMacroPillLabel: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
+  ccNoTargetsWarning: { backgroundColor: '#FFB34722', borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#FFB347' },
+  ccNoTargetsText: { color: '#FFB347', fontSize: SIZES.xs, lineHeight: 16 },
   ccPlanCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, marginBottom: 10, borderWidth: 1, borderColor: COLORS.darkBorder, overflow: 'hidden' },
   ccPlanMeta: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 4 },
   activeBadge: { backgroundColor: COLORS.success + '22', borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: COLORS.success },
@@ -2647,6 +2754,8 @@ const styles = StyleSheet.create({
   ccResultItemMacro: { color: COLORS.white, fontSize: SIZES.xs, marginBottom: 2 },
   ccResultItemCals: { fontSize: SIZES.lg, ...FONTS.bold, marginTop: 4 },
   ccResultItemDays: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 4 },
+  ccAutoFillNote: { backgroundColor: '#00C89622', borderRadius: RADIUS.md, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: '#00C896' },
+  ccAutoFillNoteText: { color: '#00C896', fontSize: SIZES.xs, lineHeight: 16 },
   tdeeCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   tdeeResultCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   tdeeCardTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 12 },
@@ -2686,8 +2795,10 @@ const styles = StyleSheet.create({
   tdeeSummaryPill: { flex: 1, borderRadius: RADIUS.md, padding: 10, alignItems: 'center', borderWidth: 1 },
   tdeeSummaryVal: { fontSize: SIZES.md, ...FONTS.bold },
   tdeeSummaryLabel: { fontSize: 9, color: COLORS.textMuted, marginTop: 2 },
-  tdeeApplyBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+  tdeeApplyBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginTop: 8, marginBottom: 8 },
   tdeeApplyBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  tdeeCarbCycleBtn: { backgroundColor: '#4ECDC422', borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#4ECDC4' },
+  tdeeCarbCycleBtnText: { color: '#4ECDC4', ...FONTS.bold, fontSize: SIZES.md },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 4 },
