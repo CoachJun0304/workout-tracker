@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, ScrollView, StyleSheet, TouchableOpacity,
-  Modal, TextInput as RNTextInput, Animated
+  Modal, TextInput as RNTextInput, Animated, Platform, AppState
 } from 'react-native';
 import { Text } from 'react-native-paper';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, FONTS, SIZES, RADIUS } from '../../theme';
@@ -17,7 +18,14 @@ const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
 const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Glutes','Calves',
   'Front Delts','Side Delts','Rear Delts','Biceps','Triceps','Core','Full Body'];
 const TIMER_PRESETS = [30, 60, 90, 120, 180, 300];
-
+const SET_TYPES = ['normal','superset','rest_pause','drop_set'];
+const SET_TYPE_LABELS = { normal: 'Normal', superset: 'SS', rest_pause: 'RP', drop_set: 'DS' };
+const SET_TYPE_COLORS = {
+  normal: COLORS.darkBorder,
+  superset: '#4ECDC4',
+  rest_pause: '#FFE66D',
+  drop_set: '#FF6B6B',
+};
 const PHASE_MODIFIERS = {
   menstrual: { weightMult: 0.75, repsRange: '12-15', label: 'Low Intensity', color: '#FF6B6B', tip: 'Reduce weight 20-30%, higher reps' },
   follicular: { weightMult: 1.0, repsRange: null, label: 'Normal / Build', color: '#4ECDC4', tip: 'Normal prescription — energy rising' },
@@ -55,8 +63,14 @@ export default function LogWorkoutScreen({ route, navigation }) {
   const [cyclePhase, setCyclePhase] = useState(null);
   const [previousLogs, setPreviousLogs] = useState({});
   const [cycles, setCycles] = useState([]);
+  const [hasUnsaved, setHasUnsaved] = useState(false);
 
-  // Timer state
+  // Superset linking
+  const [showSupersetModal, setShowSupersetModal] = useState(false);
+  const [supersetSourceIdx, setSupersetSourceIdx] = useState(null);
+  const [supersetGroups, setSupersetGroups] = useState({});
+
+  // Timer — Date.now() based for mobile reliability
   const [showTimerModal, setShowTimerModal] = useState(false);
   const [timerDuration, setTimerDuration] = useState(90);
   const [timerCustomInput, setTimerCustomInput] = useState('');
@@ -64,7 +78,9 @@ export default function LogWorkoutScreen({ route, navigation }) {
   const [timerSeconds, setTimerSeconds] = useState(90);
   const [timerPaused, setTimerPaused] = useState(false);
   const [timerFinished, setTimerFinished] = useState(false);
-  const timerRef = useRef(null);
+  const timerEndTimeRef = useRef(null);
+  const timerRemainingRef = useRef(90);
+  const timerIntervalRef = useRef(null);
   const flashAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -74,6 +90,36 @@ export default function LogWorkoutScreen({ route, navigation }) {
     }
   }, []);
 
+  // Unsaved warning — web
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handler = (e) => {
+      if (hasUnsaved) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsaved]);
+
+  // Unsaved warning — mobile (React Navigation)
+  useFocusEffect(
+    useCallback(() => {
+      const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+        if (!hasUnsaved) return;
+        e.preventDefault();
+        showConfirm(
+          'Discard workout?',
+          'You have unsaved sets. Leave anyway?',
+          () => navigation.dispatch(e.data.action),
+          null, 'Leave', true
+        );
+      });
+      return unsubscribe;
+    }, [hasUnsaved, navigation])
+  );
+
   if (!client) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.darkBg, justifyContent: 'center', alignItems: 'center' }}>
@@ -82,25 +128,69 @@ export default function LogWorkoutScreen({ route, navigation }) {
     );
   }
 
-  // ── TIMER ─────────────────────────────────────────────
+  // ── TIMER (Date.now() based — works on mobile) ────────
+
+  function startTimer(seconds) {
+    clearInterval(timerIntervalRef.current);
+    timerEndTimeRef.current = Date.now() + seconds * 1000;
+    timerRemainingRef.current = seconds;
+    setTimerDuration(seconds);
+    setTimerSeconds(seconds);
+    setTimerRunning(true);
+    setTimerPaused(false);
+    setTimerFinished(false);
+    setShowTimerModal(false);
+
+    timerIntervalRef.current = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((timerEndTimeRef.current - Date.now()) / 1000));
+      setTimerSeconds(remaining);
+      timerRemainingRef.current = remaining;
+      if (remaining <= 0) {
+        clearInterval(timerIntervalRef.current);
+        setTimerRunning(false);
+        setTimerFinished(true);
+        triggerTimerAlert();
+      }
+    }, 250);
+  }
+
+  function pauseResumeTimer() {
+    if (timerPaused) {
+      // Resume — reset end time based on remaining
+      timerEndTimeRef.current = Date.now() + timerRemainingRef.current * 1000;
+      setTimerPaused(false);
+      timerIntervalRef.current = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((timerEndTimeRef.current - Date.now()) / 1000));
+        setTimerSeconds(remaining);
+        timerRemainingRef.current = remaining;
+        if (remaining <= 0) {
+          clearInterval(timerIntervalRef.current);
+          setTimerRunning(false);
+          setTimerFinished(true);
+          triggerTimerAlert();
+        }
+      }, 250);
+    } else {
+      // Pause
+      clearInterval(timerIntervalRef.current);
+      setTimerPaused(true);
+    }
+  }
+
+  function resetTimer() {
+    clearInterval(timerIntervalRef.current);
+    setTimerRunning(false);
+    setTimerPaused(false);
+    setTimerFinished(false);
+    setTimerSeconds(timerDuration);
+    timerRemainingRef.current = timerDuration;
+  }
+
+  function restartTimer() { startTimer(timerDuration); }
 
   useEffect(() => {
-    if (timerRunning && !timerPaused) {
-      timerRef.current = setInterval(() => {
-        setTimerSeconds(s => {
-          if (s <= 1) {
-            clearInterval(timerRef.current);
-            setTimerRunning(false);
-            setTimerFinished(true);
-            triggerTimerAlert();
-            return 0;
-          }
-          return s - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timerRef.current);
-  }, [timerRunning, timerPaused]);
+    return () => clearInterval(timerIntervalRef.current);
+  }, []);
 
   function triggerTimerAlert() {
     Animated.sequence([
@@ -124,58 +214,20 @@ export default function LogWorkoutScreen({ route, navigation }) {
     }
   }
 
-  function startTimer(seconds) {
-    clearInterval(timerRef.current);
-    setTimerDuration(seconds);
-    setTimerSeconds(seconds);
-    setTimerRunning(true);
-    setTimerPaused(false);
-    setTimerFinished(false);
-    setShowTimerModal(false);
-  }
-
-  function pauseResumeTimer() { setTimerPaused(p => !p); }
-
-  function resetTimer() {
-    clearInterval(timerRef.current);
-    setTimerRunning(false);
-    setTimerPaused(false);
-    setTimerFinished(false);
-    setTimerSeconds(timerDuration);
-  }
-
-  function restartTimer() { startTimer(timerDuration); }
-
   function formatTime(s) {
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return `${m}:${String(sec).padStart(2, '0')}`;
   }
 
-  const timerProgress = timerDuration > 0 ? timerSeconds / timerDuration : 0;
   const timerColor = timerSeconds <= 10 ? '#FF6B6B'
     : timerSeconds <= 30 ? '#FFE66D' : COLORS.success;
+  const timerProgress = timerDuration > 0 ? timerSeconds / timerDuration : 0;
 
-  // ── CYCLE PHASE ───────────────────────────────────────
-
-  async function fetchCyclePhase() {
-    try {
-      const { data } = await supabase
-        .from('menstrual_cycles').select('*')
-        .eq('client_id', client.id)
-        .order('cycle_start_date', { ascending: false });
-      if (data && data.length > 0) {
-        setCycles(data);
-        const phase = getCurrentPhase(data[0].cycle_start_date, data[0].cycle_length);
-        setCyclePhase(phase);
-      }
-    } catch (e) { console.log('cycle error:', e.message); }
-  }
-
-  // ── PROGRAM ───────────────────────────────────────────
+  // ── CLIENT PROGRAM ────────────────────────────────────
 
   async function fetchClientProgram() {
-    const { data } = await supabase
+    const { data: prog } = await supabase
       .from('client_programs')
       .select('*, workout_templates(*, template_exercises(*))')
       .eq('client_id', client.id)
@@ -183,37 +235,27 @@ export default function LogWorkoutScreen({ route, navigation }) {
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
-    if (data?.workout_templates?.template_exercises) {
-      setProgram(data);
-      loadDayExercises(selectedDay, data);
+    setProgram(prog);
+    if (prog?.workout_templates?.template_exercises) {
+      loadDayExercises(selectedDay, prog);
     }
   }
 
-  async function fetchPreviousLogs(exerciseNames) {
-    const results = {};
-    for (const name of exerciseNames) {
-      const { data } = await supabase
-        .from('workout_logs').select('*')
-        .eq('client_id', client.id)
-        .eq('exercise_name', name)
-        .order('logged_at', { ascending: false }).limit(10);
-      if (data && data.length > 0) {
-        const byDate = {};
-        data.forEach(log => {
-          const date = log.logged_at?.split('T')[0];
-          if (!byDate[date]) byDate[date] = [];
-          byDate[date].push(log);
-        });
-        const lastDate = Object.keys(byDate).sort().reverse()[0];
-        results[name] = byDate[lastDate] || [];
-      }
+  async function fetchCyclePhase() {
+    const { data: cycles } = await supabase
+      .from('menstrual_cycles').select('*')
+      .eq('client_id', client.id)
+      .order('cycle_start_date', { ascending: false }).limit(1);
+    if (cycles && cycles.length > 0) {
+      setCycles(cycles);
+      const phase = getCurrentPhase(cycles[0].cycle_start_date, cycles[0].cycle_length);
+      if (phase) setCyclePhase(phase);
     }
-    setPreviousLogs(results);
   }
 
-  function loadDayExercises(day, prog) {
+  async function loadDayExercises(day, prog) {
     const p = prog || program;
-    if (!p?.workout_templates?.template_exercises) return;
+    if (!p?.workout_templates?.template_exercises) { setSets([]); return; }
     const seen = new Set();
     const dayExs = p.workout_templates.template_exercises
       .filter(e => e.day === day)
@@ -222,76 +264,52 @@ export default function LogWorkoutScreen({ route, navigation }) {
         if (seen.has(ex.exercise_name)) return false;
         seen.add(ex.exercise_name); return true;
       });
-    if (dayExs.length > 0) {
-      setSets(dayExs.map(ex => ({
-        exercise_name: ex.exercise_name,
-        muscle_group: ex.muscle_group || 'Other',
-        prescribed_sets: ex.working_sets || 3,
-        prescribed_reps: ex.reps || '8-12',
-        entries: Array.from({ length: ex.working_sets || 3 }, () => ({
-          weight: '', reps: ex.reps?.split('-')[0] || '', unit: unit || 'kg', is_pb: false
-        }))
-      })));
-      fetchPreviousLogs(dayExs.map(e => e.exercise_name));
+    const exerciseSets = dayExs.map(ex => ({
+      exercise_name: ex.exercise_name,
+      muscle_group: ex.muscle_group || 'Other',
+      prescribed_sets: ex.working_sets || 3,
+      prescribed_reps: ex.reps || '8-12',
+      entries: Array.from({ length: ex.working_sets || 3 }, () => ({
+        weight: '', reps: ex.reps?.split('-')[0] || '',
+        unit: client.unit_preference || unit || 'kg',
+        is_pb: false, set_type: 'normal', superset_group: null,
+      }))
+    }));
+    setSets(exerciseSets);
+    // Fetch previous logs
+    for (const ex of dayExs) {
+      const { data } = await supabase
+        .from('workout_logs').select('*')
+        .eq('client_id', client.id)
+        .eq('exercise_name', ex.exercise_name)
+        .order('logged_at', { ascending: false }).limit(10);
+      if (data?.length > 0) {
+        setPreviousLogs(prev => ({ ...prev, [ex.exercise_name]: data }));
+      }
     }
   }
 
-  // ── PROGRESSIVE OVERLOAD ─────────────────────────────
-
-  function getProgressionSuggestion(exerciseName, prescribed) {
-    const prev = previousLogs[exerciseName];
-    if (!prev || prev.length === 0) return null;
-    const prescribedRepsStr = prescribed?.prescribed_reps || '8';
-    const prescribedReps = parseInt(prescribedRepsStr.split('-')[0]) || 8;
-    const prescribedRepsMax = parseInt(prescribedRepsStr.split('-').pop()) || prescribedReps;
-    const prescribedSets = parseInt(prescribed?.prescribed_sets) || 3;
-    const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
-    const avgReps = prev.reduce((s, l) => s + (l.reps || 0), 0) / prev.length;
-    let suggestion = '', suggestionColor = COLORS.success, actionType = '';
-    if (avgReps >= prescribedRepsMax) {
-      const addWeight = unit === 'lbs' ? 5 : 2.5;
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add weight: try ${prescribedSets}×${prescribedReps} @ ${toDisplay(maxWeight + addWeight, unit)}${ul}`;
-      suggestionColor = '#FFE66D'; actionType = 'weight';
-    } else if (avgReps >= prescribedReps) {
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add rep: try ${prescribedSets}×${Math.round(avgReps) + 1} @ ${toDisplay(maxWeight, unit)}${ul}`;
-      suggestionColor = COLORS.success; actionType = 'reps';
-    } else {
-      suggestion = `Last: ${prescribedSets}×${Math.round(avgReps)} @ ${toDisplay(maxWeight, unit)}${ul}\n→ Consolidate: same weight`;
-      suggestionColor = '#FF9F43'; actionType = 'consolidate';
-    }
-    return { suggestion, suggestionColor, actionType };
-  }
-
-  // ── CYCLE SUGGESTION PER EXERCISE ────────────────────
-
-  function getCycleSuggestion(exerciseName, prescribed) {
-    if (!cyclePhase) return null;
-    const mod = getPhaseModifier(cyclePhase.name);
-    if (!mod) return null;
-    const prev = previousLogs[exerciseName];
-    if (!prev || prev.length === 0) return null;
-    const lastWeight = Math.max(...prev.map(l => l.weight_kg || 0));
-    if (lastWeight === 0) return null;
-    const suggestedWeight = toDisplay(lastWeight * mod.weightMult, unit);
-    const repsStr = mod.repsRange || prescribed?.prescribed_reps || '8-12';
-    return {
-      ...mod,
-      text: `${exerciseName}: try ${suggestedWeight}${ul} × ${repsStr} reps (was ${toDisplay(lastWeight, unit)}${ul})`,
-    };
-  }
-
-  // ── SET MANAGEMENT ───────────────────────────────────
+  // ── SET MANAGEMENT ────────────────────────────────────
 
   function updateEntry(exIdx, setIdx, field, value) {
     setSets(s => s.map((ex, i) => i === exIdx
       ? { ...ex, entries: ex.entries.map((e, j) => j === setIdx ? { ...e, [field]: value } : e) }
       : ex
     ));
+    if (field === 'weight' || field === 'reps') setHasUnsaved(true);
+
+    // Auto-start short timer for rest-pause
+    if (field === 'set_type' && value === 'rest_pause') {
+      startTimer(20);
+    }
   }
 
   function addSet(exIdx) {
     setSets(s => s.map((ex, i) => i === exIdx
-      ? { ...ex, entries: [...ex.entries, { weight: '', reps: '', unit: unit || 'kg', is_pb: false }] }
+      ? { ...ex, entries: [...ex.entries, {
+          weight: '', reps: '', unit: client.unit_preference || unit || 'kg',
+          is_pb: false, set_type: 'normal', superset_group: null,
+        }] }
       : ex
     ));
   }
@@ -317,38 +335,130 @@ export default function LogWorkoutScreen({ route, navigation }) {
       exercise_name: newEx.name.trim(),
       muscle_group: newEx.muscle_group,
       prescribed_sets: 3, prescribed_reps: '8-12',
-      entries: [{ weight: '', reps: '', unit: unit || 'kg', is_pb: false }]
+      entries: [{ weight: '', reps: '', unit: client.unit_preference || unit || 'kg',
+        is_pb: false, set_type: 'normal', superset_group: null }]
     }]);
-    fetchPreviousLogs([newEx.name.trim()]);
     setNewEx({ name: '', muscle_group: 'Chest' });
     setShowAddEx(false);
   }
 
-  function confirmDate() {
-    if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      setSelectedDate(dateInput);
-      const d = new Date(dateInput + 'T12:00:00');
-      setSelectedMonth(MONTHS[d.getMonth()]);
-      const newDay = DAYS[d.getDay() === 0 ? 6 : d.getDay() - 1];
-      setSelectedDay(newDay);
-      loadDayExercises(newDay, null);
-    } else {
-      showAlert('Invalid Date', 'Please use YYYY-MM-DD format'); return;
-    }
-    setShowDatePicker(false);
+  // ── SUPERSET LINKING ──────────────────────────────────
+
+  function openSupersetLink(exIdx) {
+    setSupersetSourceIdx(exIdx);
+    setShowSupersetModal(true);
   }
 
-  // ── SAVE ─────────────────────────────────────────────
+  function linkSuperset(targetIdx) {
+    if (targetIdx === supersetSourceIdx) {
+      showAlert('Error', 'Cannot link an exercise with itself'); return;
+    }
+    const groupKey = `SS${String.fromCharCode(65 + Object.keys(supersetGroups).length)}`;
+    const existing = supersetGroups[supersetSourceIdx] || supersetGroups[targetIdx];
+    const key = existing || groupKey;
+    setSupersetGroups(g => ({
+      ...g,
+      [supersetSourceIdx]: key,
+      [targetIdx]: key,
+    }));
+    // Tag all sets in both exercises
+    setSets(s => s.map((ex, i) => {
+      if (i === supersetSourceIdx || i === targetIdx) {
+        return { ...ex, entries: ex.entries.map(e => ({ ...e, set_type: 'superset', superset_group: key })) };
+      }
+      return ex;
+    }));
+    setShowSupersetModal(false);
+    showAlert('✅ Linked!', `${sets[supersetSourceIdx].exercise_name} + ${sets[targetIdx].exercise_name} are now a superset (${key})`);
+  }
+
+  function unlinkSuperset(exIdx) {
+    const group = supersetGroups[exIdx];
+    setSupersetGroups(g => {
+      const updated = { ...g };
+      Object.keys(updated).forEach(k => { if (updated[k] === group) delete updated[k]; });
+      return updated;
+    });
+    setSets(s => s.map((ex, i) => {
+      if (supersetGroups[i] === group) {
+        return { ...ex, entries: ex.entries.map(e => ({ ...e, set_type: 'normal', superset_group: null })) };
+      }
+      return ex;
+    }));
+  }
+
+  // ── DROP SET SUGGESTION ───────────────────────────────
+
+  function getDropSetSuggestion(exIdx, setIdx) {
+    const ex = sets[exIdx];
+    const prevEntry = ex.entries[setIdx - 1];
+    if (!prevEntry?.weight) return null;
+    const prevWeight = parseFloat(prevEntry.weight);
+    const suggestedWeight = (prevWeight * 0.8).toFixed(1);
+    return suggestedWeight;
+  }
+
+  // ── PROGRESSION SUGGESTION ────────────────────────────
+
+  function getProgressionSuggestion(exerciseName, ex) {
+    const prev = previousLogs[exerciseName];
+    if (!prev || prev.length === 0) return null;
+    const prescribedRepsStr = ex.prescribed_reps || '8';
+    const prescribedReps = parseInt(prescribedRepsStr.split('-')[0]) || 8;
+    const prescribedRepsMax = parseInt(prescribedRepsStr.split('-').pop()) || prescribedReps;
+    const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
+    const avgReps = prev.reduce((s, l) => s + (l.reps || 0), 0) / prev.length;
+    let suggestion = '', suggestionColor = COLORS.success, actionType = '';
+    if (avgReps >= prescribedRepsMax) {
+      const addWeight = unit === 'lbs' ? 5 : 2.5;
+      suggestion = `Last: ${Math.round(avgReps)} reps @ ${toDisplay(maxWeight, unit)}${ul}\n→ Try ${toDisplay(maxWeight + addWeight, unit)}${ul} for ${prescribedReps} reps`;
+      suggestionColor = '#FFE66D'; actionType = 'weight';
+    } else if (avgReps >= prescribedReps) {
+      suggestion = `Last: ${Math.round(avgReps)} reps @ ${toDisplay(maxWeight, unit)}${ul}\n→ Add a rep: aim for ${Math.round(avgReps) + 1}`;
+      suggestionColor = COLORS.success; actionType = 'reps';
+    } else {
+      suggestion = `Last: ${Math.round(avgReps)} reps @ ${toDisplay(maxWeight, unit)}${ul}\n→ Same weight, focus on form`;
+      suggestionColor = '#FF9F43'; actionType = 'consolidate';
+    }
+    return { suggestion, suggestionColor, actionType };
+  }
+
+  function getCycleSuggestion(exerciseName, ex) {
+    if (!cyclePhase || !phaseModifier) return null;
+    const prev = previousLogs[exerciseName];
+    if (!prev || prev.length === 0) return null;
+    const maxWeight = Math.max(...prev.map(l => l.weight_kg || 0));
+    const suggested = toDisplay(maxWeight * phaseModifier.weightMult, unit);
+    return {
+      text: `${exerciseName}: ${suggested}${ul} × ${phaseModifier.repsRange || ex.prescribed_reps}`,
+      color: phaseModifier.color,
+    };
+  }
+
+  // ── DATE ──────────────────────────────────────────────
+
+  function confirmDate() {
+    if (!dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      showAlert('Invalid Date', 'Use YYYY-MM-DD format'); return;
+    }
+    setSelectedDate(dateInput);
+    const d = new Date(dateInput + 'T12:00:00');
+    const dayName = DAYS[d.getDay() === 0 ? 6 : d.getDay() - 1];
+    const monthName = MONTHS[d.getMonth()];
+    setSelectedDay(dayName);
+    setSelectedMonth(monthName);
+    setShowDatePicker(false);
+    loadDayExercises(dayName, null);
+  }
+
+  // ── SAVE ──────────────────────────────────────────────
 
   async function handleSave() {
-    // Get cycle phase for this date
-    let cyclePhaseTag = null;
-    if (client.gender === 'Female' && cycles.length > 0) {
-      const phase = getPhaseForDate(selectedDate, cycles[0].cycle_start_date, cycles[0].cycle_length);
-      cyclePhaseTag = phase?.name || null;
-    }
-
+    const hasData = sets.some(ex => ex.entries.some(e => e.weight || e.reps));
+    if (!hasData) { showAlert('No data', 'Log at least one set before saving'); return; }
+    setLoading(true);
     const rows = [];
+    const cyclePhaseTag = cyclePhase?.name || null;
     for (const ex of sets) {
       const { data: prData } = await supabase
         .from('workout_logs').select('weight_kg')
@@ -367,20 +477,18 @@ export default function LogWorkoutScreen({ route, navigation }) {
           month: selectedMonth,
           week: 1,
           day: selectedDay,
-          set_type: 'working',
+          set_type: entry.set_type || 'working',
           set_number: setIdx + 1,
           weight_kg: weightKg,
           reps: entry.reps ? parseInt(entry.reps) : null,
           is_personal_best: weightKg && weightKg > currentPR,
           logged_at: new Date(selectedDate + 'T12:00:00').toISOString(),
           cycle_phase: cyclePhaseTag,
+          superset_group: entry.superset_group || null,
+          exercise_set_type: entry.set_type || 'normal',
         });
       });
     }
-
-    if (!rows.length) { showAlert('No data', 'Enter at least one set'); return; }
-    setLoading(true);
-
     if (sessionNote.trim()) {
       await supabase.from('session_notes').upsert({
         client_id: client.id,
@@ -388,15 +496,22 @@ export default function LogWorkoutScreen({ route, navigation }) {
         note: sessionNote.trim(),
       }, { onConflict: 'client_id,date' });
     }
-
     const { error } = await supabase.from('workout_logs').insert(rows);
     setLoading(false);
     if (error) { showAlert('Error', error.message); return; }
     const prs = rows.filter(r => r.is_personal_best).length;
-    showAlert('✅ Workout Logged!',
-      `${rows.length} sets saved for ${client.name}!${prs > 0 ? `\n🏆 ${prs} new PR!` : ''}${cyclePhaseTag ? `\n🌸 Tagged: ${cyclePhaseTag}` : ''}`,
-      [{ text: 'OK', onPress: () => navigation.goBack() }]
-    );
+    const ssCount = rows.filter(r => r.exercise_set_type === 'superset').length;
+    const dsCount = rows.filter(r => r.exercise_set_type === 'drop_set').length;
+    const rpCount = rows.filter(r => r.exercise_set_type === 'rest_pause').length;
+    let details = `${rows.length} sets logged`;
+    if (prs > 0) details += ` 🏆 ${prs} PR!`;
+    if (ssCount > 0) details += ` · ${ssCount} SS sets`;
+    if (dsCount > 0) details += ` · ${dsCount} Drop sets`;
+    if (rpCount > 0) details += ` · ${rpCount} Rest-pause sets`;
+    setHasUnsaved(false);
+    showAlert('✅ Workout Saved!', details, [
+      { text: 'Done', onPress: () => navigation.goBack() }
+    ]);
   }
 
   const phaseModifier = cyclePhase ? getPhaseModifier(cyclePhase.name) : null;
@@ -416,6 +531,11 @@ export default function LogWorkoutScreen({ route, navigation }) {
               {program ? program.workout_templates?.name : 'No program assigned'}
             </Text>
           </View>
+          {hasUnsaved && (
+            <View style={styles.unsavedBadge}>
+              <Text style={styles.unsavedBadgeText}>Unsaved</Text>
+            </View>
+          )}
         </View>
 
         {/* Cycle phase banner */}
@@ -495,8 +615,21 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
         {sets.map((ex, exIdx) => {
           const progression = getProgressionSuggestion(ex.exercise_name, ex);
+          const ssGroup = supersetGroups[exIdx];
           return (
-            <View key={exIdx} style={styles.exerciseCard}>
+            <View key={exIdx} style={[styles.exerciseCard,
+              ssGroup && { borderLeftColor: '#4ECDC4', borderLeftWidth: 3 }]}>
+
+              {/* Superset group label */}
+              {ssGroup && (
+                <View style={styles.ssGroupBanner}>
+                  <Text style={styles.ssGroupText}>🔗 {ssGroup}</Text>
+                  <TouchableOpacity onPress={() => unlinkSuperset(exIdx)}>
+                    <Text style={styles.ssUnlinkText}>Unlink</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <View style={styles.exHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.exerciseName}>{ex.exercise_name || 'New Exercise'}</Text>
@@ -505,9 +638,14 @@ export default function LogWorkoutScreen({ route, navigation }) {
                     Prescribed: {ex.prescribed_sets}×{ex.prescribed_reps}
                   </Text>
                 </View>
-                <TouchableOpacity onPress={() => removeExercise(exIdx)}>
-                  <Text style={{ fontSize: 18 }}>🗑️</Text>
-                </TouchableOpacity>
+                <View style={{ gap: 4 }}>
+                  <TouchableOpacity onPress={() => removeExercise(exIdx)}>
+                    <Text style={{ fontSize: 18 }}>🗑️</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => openSupersetLink(exIdx)}>
+                    <Text style={{ fontSize: 14 }}>🔗</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {progression && (
@@ -529,49 +667,95 @@ export default function LogWorkoutScreen({ route, navigation }) {
                 </View>
               )}
 
-              {ex.entries.map((entry, setIdx) => (
-                <View key={setIdx} style={styles.setCard}>
-                  <View style={styles.setCardHeader}>
-                    <View style={styles.setNumBadge}>
-                      <Text style={styles.setNumBadgeText}>Set {setIdx + 1}</Text>
+              {ex.entries.map((entry, setIdx) => {
+                const dropSuggestion = entry.set_type === 'drop_set'
+                  ? getDropSetSuggestion(exIdx, setIdx) : null;
+                return (
+                  <View key={setIdx} style={[styles.setCard,
+                    entry.set_type !== 'normal' && {
+                      borderColor: SET_TYPE_COLORS[entry.set_type],
+                      borderWidth: 1.5,
+                    }]}>
+                    <View style={styles.setCardHeader}>
+                      <View style={[styles.setNumBadge, {
+                        borderColor: SET_TYPE_COLORS[entry.set_type] || COLORS.roseGold
+                      }]}>
+                        <Text style={[styles.setNumBadgeText, {
+                          color: SET_TYPE_COLORS[entry.set_type] || COLORS.roseGold
+                        }]}>
+                          {entry.set_type === 'superset' && ssGroup ? `${ssGroup} ` : ''}
+                          Set {setIdx + 1}
+                        </Text>
+                      </View>
+                      <View style={styles.setCardActions}>
+                        <TouchableOpacity
+                          style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
+                          onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
+                          <Text style={styles.prBtnText}>
+                            {entry.is_pb ? '🏆 PR' : '○ PR'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.removeSetBtn}
+                          onPress={() => removeSet(exIdx, setIdx)}>
+                          <Text style={{ color: COLORS.error }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                    <View style={styles.setCardActions}>
+
+                    {/* Set type chips */}
+                    <View style={styles.setTypeRow}>
+                      {SET_TYPES.map(type => (
+                        <TouchableOpacity key={type}
+                          style={[styles.setTypeChip, {
+                            backgroundColor: entry.set_type === type
+                              ? SET_TYPE_COLORS[type] : 'transparent',
+                            borderColor: SET_TYPE_COLORS[type],
+                          }]}
+                          onPress={() => updateEntry(exIdx, setIdx, 'set_type', type)}>
+                          <Text style={[styles.setTypeChipText, {
+                            color: entry.set_type === type ? COLORS.white : SET_TYPE_COLORS[type]
+                          }]}>
+                            {SET_TYPE_LABELS[type]}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    {/* Drop set suggestion */}
+                    {dropSuggestion && (
                       <TouchableOpacity
-                        style={[styles.prBtn, entry.is_pb && styles.prBtnActive]}
-                        onPress={() => updateEntry(exIdx, setIdx, 'is_pb', !entry.is_pb)}>
-                        <Text style={styles.prBtnText}>
-                          {entry.is_pb ? '🏆 PR' : '○ PR'}
+                        style={styles.dropSuggest}
+                        onPress={() => updateEntry(exIdx, setIdx, 'weight', dropSuggestion)}>
+                        <Text style={styles.dropSuggestText}>
+                          💡 Suggested drop: {dropSuggestion}{entry.unit} (−20%) — tap to apply
                         </Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.removeSetBtn}
-                        onPress={() => removeSet(exIdx, setIdx)}>
-                        <Text style={{ color: COLORS.error }}>✕</Text>
+                    )}
+
+                    <View style={styles.setCardInputs}>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Weight</Text>
+                        <RNTextInput value={entry.weight}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
+                          style={styles.inputGroupField} placeholder="0"
+                          placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                      </View>
+                      <TouchableOpacity style={styles.unitToggle}
+                        onPress={() => updateEntry(exIdx, setIdx, 'unit',
+                          entry.unit === 'kg' ? 'lbs' : 'kg')}>
+                        <Text style={styles.unitToggleText}>{entry.unit}</Text>
                       </TouchableOpacity>
+                      <View style={styles.inputGroup}>
+                        <Text style={styles.inputGroupLabel}>Reps</Text>
+                        <RNTextInput value={entry.reps}
+                          onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
+                          style={styles.inputGroupField} placeholder="0"
+                          placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
+                      </View>
                     </View>
                   </View>
-                  <View style={styles.setCardInputs}>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Weight</Text>
-                      <RNTextInput value={entry.weight}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'weight', v)}
-                        style={styles.inputGroupField} placeholder="0"
-                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
-                    </View>
-                    <TouchableOpacity style={styles.unitToggle}
-                      onPress={() => updateEntry(exIdx, setIdx, 'unit',
-                        entry.unit === 'kg' ? 'lbs' : 'kg')}>
-                      <Text style={styles.unitToggleText}>{entry.unit}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputGroupLabel}>Reps</Text>
-                      <RNTextInput value={entry.reps}
-                        onChangeText={v => updateEntry(exIdx, setIdx, 'reps', v)}
-                        style={styles.inputGroupField} placeholder="0"
-                        placeholderTextColor={COLORS.textMuted} keyboardType="numeric" />
-                    </View>
-                  </View>
-                </View>
-              ))}
+                );
+              })}
 
               <TouchableOpacity style={styles.addSetBtn} onPress={() => addSet(exIdx)}>
                 <Text style={styles.addSetBtnText}>+ Add Set</Text>
@@ -594,7 +778,7 @@ export default function LogWorkoutScreen({ route, navigation }) {
 
       </ScrollView>
 
-      {/* ── FLOATING TIMER BUTTON ── */}
+      {/* Floating timer */}
       <Animated.View style={[styles.timerFab, {
         backgroundColor: timerRunning
           ? (timerFinished ? '#FF6B6B' : timerColor)
@@ -765,6 +949,35 @@ export default function LogWorkoutScreen({ route, navigation }) {
         </View>
       </Modal>
 
+      {/* Superset link modal */}
+      <Modal visible={showSupersetModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🔗 Link Superset</Text>
+            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.sm, marginBottom: 16 }}>
+              Select which exercise to pair with{' '}
+              <Text style={{ color: COLORS.white, ...FONTS.bold }}>
+                {supersetSourceIdx !== null ? sets[supersetSourceIdx]?.exercise_name : ''}
+              </Text>
+            </Text>
+            {sets.map((ex, i) => {
+              if (i === supersetSourceIdx) return null;
+              return (
+                <TouchableOpacity key={i} style={styles.ssLinkOption}
+                  onPress={() => linkSuperset(i)}>
+                  <Text style={styles.ssLinkOptionText}>{ex.exercise_name}</Text>
+                  <Text style={styles.ssLinkOptionMuscle}>{ex.muscle_group}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity style={[styles.modalCancelBtn, { marginTop: 12 }]}
+              onPress={() => setShowSupersetModal(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -777,6 +990,8 @@ const styles = StyleSheet.create({
   clientAvatarText: { color: COLORS.white, fontSize: 18, ...FONTS.bold },
   clientName: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   clientSub: { color: 'rgba(255,255,255,0.7)', fontSize: SIZES.xs },
+  unsavedBadge: { backgroundColor: '#FFE66D33', borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: '#FFE66D' },
+  unsavedBadgeText: { color: '#FFE66D', fontSize: 9, ...FONTS.bold },
   cycleBanner: { borderRadius: RADIUS.lg, padding: 14, marginBottom: 12, borderWidth: 2, backgroundColor: COLORS.darkCard },
   cycleBannerHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
   cycleBannerEmoji: { fontSize: 24 },
@@ -799,44 +1014,52 @@ const styles = StyleSheet.create({
   noteInput: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, color: COLORS.white, fontSize: SIZES.sm, borderWidth: 1, borderColor: COLORS.darkBorder, minHeight: 60, textAlignVertical: 'top', marginBottom: 4 },
   emptyCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 32, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
-  emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4, textAlign: 'center' },
-  exerciseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
-  exHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
-  exerciseName: { color: COLORS.white, fontSize: SIZES.lg, ...FONTS.bold },
-  muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.sm, marginTop: 2 },
+  emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4 },
+  exerciseCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  ssGroupBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#4ECDC422', borderRadius: RADIUS.md, padding: 8, marginBottom: 10, borderWidth: 1, borderColor: '#4ECDC4' },
+  ssGroupText: { color: '#4ECDC4', fontSize: SIZES.xs, ...FONTS.bold },
+  ssUnlinkText: { color: COLORS.error, fontSize: SIZES.xs, ...FONTS.semibold },
+  exHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+  exerciseName: { color: COLORS.white, fontSize: SIZES.md, ...FONTS.bold },
+  muscleGroup: { color: COLORS.roseGold, fontSize: SIZES.xs, marginTop: 2 },
   prescribedText: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   progressionCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, marginBottom: 10, borderWidth: 1, borderLeftWidth: 3 },
   progressionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   progressionIcon: { fontSize: 14 },
   progressionTitle: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold },
   progressionText: { fontSize: SIZES.xs, lineHeight: 18 },
-  setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
-  setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  setNumBadge: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: COLORS.roseGoldMid },
-  setNumBadgeText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  setCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  setCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  setNumBadge: { borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1 },
+  setNumBadgeText: { fontSize: SIZES.xs, ...FONTS.bold },
   setCardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  prBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, borderWidth: 1, borderColor: COLORS.darkBorder },
+  prBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, backgroundColor: COLORS.darkCard, borderWidth: 1, borderColor: COLORS.darkBorder },
   prBtnActive: { backgroundColor: COLORS.roseGoldMid, borderColor: COLORS.roseGold },
   prBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.semibold },
-  removeSetBtn: { padding: 6, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.sm },
-  setCardInputs: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  removeSetBtn: { padding: 4, backgroundColor: '#FF4B4B22', borderRadius: RADIUS.sm },
+  setTypeRow: { flexDirection: 'row', gap: 4, marginBottom: 8 },
+  setTypeChip: { flex: 1, paddingVertical: 5, borderRadius: RADIUS.md, alignItems: 'center', borderWidth: 1.5 },
+  setTypeChipText: { fontSize: 9, ...FONTS.bold },
+  dropSuggest: { backgroundColor: '#FF6B6B11', borderRadius: RADIUS.md, padding: 8, marginBottom: 8, borderWidth: 1, borderColor: '#FF6B6B44' },
+  dropSuggestText: { color: '#FF6B6B', fontSize: SIZES.xs, ...FONTS.semibold },
+  setCardInputs: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   inputGroup: { flex: 1 },
-  inputGroupLabel: { color: COLORS.textMuted, fontSize: 10, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 },
-  inputGroupField: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 10, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 48 },
-  unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 48, minWidth: 52 },
-  unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.bold },
-  addSetBtn: { marginTop: 8, alignItems: 'center', padding: 8, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
-  addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.sm },
+  inputGroupLabel: { color: COLORS.textMuted, fontSize: 9, ...FONTS.semibold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 },
+  inputGroupField: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 8, color: COLORS.white, fontSize: SIZES.lg, borderWidth: 1, borderColor: COLORS.darkBorder, textAlign: 'center', ...FONTS.bold, height: 44 },
+  unitToggle: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: COLORS.roseGoldMid, alignItems: 'center', justifyContent: 'center', height: 44, minWidth: 48 },
+  unitToggleText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  addSetBtn: { marginTop: 6, alignItems: 'center', padding: 6, borderWidth: 1, borderColor: COLORS.darkBorder, borderRadius: RADIUS.md },
+  addSetBtnText: { color: COLORS.textSecondary, fontSize: SIZES.xs },
   addExBtn: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.full, paddingVertical: 14, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
-  addExBtnText: { color: COLORS.textSecondary, ...FONTS.medium, fontSize: SIZES.md },
-  saveBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', shadowColor: COLORS.roseGold, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 6 },
+  addExBtnText: { color: COLORS.textSecondary, ...FONTS.medium, fontSize: SIZES.sm },
+  saveBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 16, alignItems: 'center', marginBottom: 8, elevation: 6 },
   saveBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
   timerFab: { position: 'absolute', bottom: 24, right: 16, borderRadius: 32, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8 },
   timerFabInner: { paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center', minWidth: 70 },
   timerFabIcon: { fontSize: 20 },
   timerFabText: { color: COLORS.white, fontSize: SIZES.xs, ...FONTS.bold, marginTop: 2 },
   timerOverlay: { position: 'absolute', bottom: 90, right: 16, left: 16 },
-  timerOverlayCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.xl, padding: 20, borderWidth: 2, borderColor: COLORS.roseGold, shadowColor: COLORS.roseGold, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 10 },
+  timerOverlayCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.xl, padding: 20, borderWidth: 2, borderColor: COLORS.roseGold, elevation: 10 },
   timerOverlayTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, textAlign: 'center', marginBottom: 8 },
   timerOverlayCount: { fontSize: 56, ...FONTS.heavy, textAlign: 'center', marginBottom: 12 },
   timerProgressBg: { height: 6, backgroundColor: COLORS.darkCard2, borderRadius: 3, marginBottom: 16, overflow: 'hidden' },
@@ -847,6 +1070,9 @@ const styles = StyleSheet.create({
   timerPresets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   timerPresetBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: RADIUS.full, backgroundColor: COLORS.roseGoldFaint, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   timerPresetBtnText: { color: COLORS.roseGold, ...FONTS.bold, fontSize: SIZES.sm },
+  ssLinkOption: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 14, marginBottom: 6, borderWidth: 1, borderColor: COLORS.darkBorder },
+  ssLinkOptionText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md },
+  ssLinkOptionMuscle: { color: COLORS.roseGold, fontSize: SIZES.xs, marginTop: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 16 },

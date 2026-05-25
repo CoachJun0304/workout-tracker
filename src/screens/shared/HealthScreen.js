@@ -12,10 +12,12 @@ import { showAlert, showConfirm } from '../../utils/webAlert';
 
 const W = Dimensions.get('window').width;
 const DAYS_OF_WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAYS_ORDERED = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MEAL_TYPES = ['Breakfast','Lunch','Dinner','Snack','Pre-workout','Post-workout','Other'];
 const FOOD_CATEGORIES = ['Meat & Poultry','Fish & Seafood','Dairy','Eggs','Grains & Cereals',
   'Fruits','Vegetables','Legumes','Nuts & Seeds','Oils & Fats','Sweets','Beverages','Fast Food',
   'Supplements','Other'];
+const CC_DAY_COLORS = { high: '#FF6B6B', medium: '#FFE66D', low: '#4ECDC4', none: COLORS.darkBorder };
 
 export default function HealthScreen({ navigation }) {
   const { profile } = useAuth();
@@ -29,6 +31,7 @@ export default function HealthScreen({ navigation }) {
   const [foodEntries, setFoodEntries] = useState([]);
   const [foodLibrary, setFoodLibrary] = useState([]);
   const [cycles, setCycles] = useState([]);
+  const [carbCyclePlans, setCarbCyclePlans] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [selectedCalDate, setSelectedCalDate] = useState(todayStr);
@@ -76,7 +79,7 @@ export default function HealthScreen({ navigation }) {
 
   async function fetchAll() {
     if (!profile) return;
-    const [wRes, mRes, tRes, fRes, flRes, cRes] = await Promise.all([
+    const [wRes, mRes, tRes, fRes, flRes, cRes, ccRes] = await Promise.all([
       supabase.from('weight_logs').select('*')
         .eq('client_id', profile.id).order('logged_at', { ascending: true }),
       supabase.from('macro_logs').select('*')
@@ -89,6 +92,10 @@ export default function HealthScreen({ navigation }) {
       supabase.from('menstrual_cycles').select('*')
         .eq('client_id', profile.id)
         .order('cycle_start_date', { ascending: false }),
+      supabase.from('carb_cycling_plans').select('*')
+        .eq('client_id', profile.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false }),
     ]);
     setWeightLogs(wRes.data || []);
     setMacroLogs(mRes.data || []);
@@ -96,9 +103,10 @@ export default function HealthScreen({ navigation }) {
     setFoodEntries(fRes.data || []);
     setFoodLibrary(flRes.data || []);
     setCycles(cRes.data || []);
+    setCarbCyclePlans(ccRes.data || []);
   }
 
-  // ── WEIGHT ─────────────────────────────────────────────
+  // ── WEIGHT ────────────────────────────────────────────
 
   async function saveWeight() {
     if (!weightInput.trim()) { showAlert('Error', 'Enter your weight'); return; }
@@ -130,7 +138,7 @@ export default function HealthScreen({ navigation }) {
     }, null, 'Delete', true);
   }
 
-  // ── FOOD & MACROS ─────────────────────────────────────
+  // ── FOOD ─────────────────────────────────────────────
 
   const filteredFoods = foodLibrary.filter(f =>
     f.name.toLowerCase().includes(foodSearch.toLowerCase()) ||
@@ -286,14 +294,12 @@ export default function HealthScreen({ navigation }) {
     const newStart = editCycleInput.start_date;
     const newLength = parseInt(editCycleInput.cycle_length) || 28;
     const newPeriod = parseInt(editCycleInput.period_length) || 5;
-
     await supabase.from('menstrual_cycles').update({
       cycle_start_date: newStart,
       cycle_length: newLength,
       period_length: newPeriod,
       updated_at: new Date().toISOString(),
     }).eq('id', editingCycle.id);
-
     setLoading(false);
     setShowEditCycleModal(false);
     await retroactivelyRetag(newStart, newLength);
@@ -303,20 +309,18 @@ export default function HealthScreen({ navigation }) {
   async function deleteCycleEntry(cycle) {
     showConfirm(
       'Delete Cycle Entry',
-      `Delete cycle starting ${cycle.cycle_start_date}? Workout logs in this cycle will have phase tags cleared.`,
+      `Delete cycle starting ${cycle.cycle_start_date}?`,
       async () => {
         setRetagging(true);
         const endDate = new Date(
           new Date(cycle.cycle_start_date).getTime() +
           cycle.cycle_length * 24 * 60 * 60 * 1000
         ).toISOString().split('T')[0];
-
         await supabase.from('workout_logs')
           .update({ cycle_phase: null })
           .eq('client_id', profile.id)
           .gte('logged_at', cycle.cycle_start_date)
           .lte('logged_at', endDate + 'T23:59:59');
-
         await supabase.from('menstrual_cycles').delete().eq('id', cycle.id);
         setRetagging(false);
         fetchAll();
@@ -331,15 +335,12 @@ export default function HealthScreen({ navigation }) {
     const endDate = new Date(
       new Date(startDate).getTime() + cycleLength * 24 * 60 * 60 * 1000
     ).toISOString().split('T')[0];
-
     const { data: logs } = await supabase
       .from('workout_logs').select('id, logged_at')
       .eq('client_id', profile.id)
       .gte('logged_at', startDate)
       .lte('logged_at', endDate + 'T23:59:59');
-
     if (!logs || logs.length === 0) { setRetagging(false); return; }
-
     for (const log of logs) {
       const logDate = log.logged_at.split('T')[0];
       const phase = getPhaseForDate(logDate, startDate, cycleLength);
@@ -347,12 +348,40 @@ export default function HealthScreen({ navigation }) {
         .update({ cycle_phase: phase?.name || null })
         .eq('id', log.id);
     }
-
     setRetagging(false);
     showAlert('✅ Done!', `${logs.length} workout logs updated with corrected phase tags.`);
   }
 
-  // ── CALENDAR HELPERS ──────────────────────────────────
+  // ── CARB CYCLING ──────────────────────────────────────
+
+  function getActiveCarbPlan() {
+    return carbCyclePlans.find(p => p.is_active) || carbCyclePlans[0] || null;
+  }
+
+  function getTodayCarbTargets(plan) {
+    if (!plan) return null;
+    const todayName = DAYS_ORDERED[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
+    let dayType = 'none';
+    if ((plan.high_carb_days || []).includes(todayName)) dayType = 'high';
+    else if ((plan.medium_carb_days || []).includes(todayName)) dayType = 'medium';
+    else if ((plan.low_carb_days || []).includes(todayName)) dayType = 'low';
+    const carbG = dayType === 'high' ? plan.high_carb_g
+      : dayType === 'medium' ? plan.medium_carb_g
+      : dayType === 'low' ? plan.low_carb_g : null;
+    const cals = dayType === 'high' ? plan.high_carb_calories
+      : dayType === 'medium' ? plan.medium_carb_calories
+      : dayType === 'low' ? plan.low_carb_calories : null;
+    return { dayType, carbG, cals, todayName, plan };
+  }
+
+  function getDayCarbType(plan, dayName) {
+    if ((plan.high_carb_days || []).includes(dayName)) return 'high';
+    if ((plan.medium_carb_days || []).includes(dayName)) return 'medium';
+    if ((plan.low_carb_days || []).includes(dayName)) return 'low';
+    return 'none';
+  }
+
+  // ── CALENDAR ─────────────────────────────────────────
 
   function getMacroCalendarCells() {
     const year = calendarMonth.getFullYear();
@@ -455,7 +484,6 @@ export default function HealthScreen({ navigation }) {
     const areaPoints = `${padL},${chartH - padB} ` +
       data.map((d, i) => `${scaleX(i)},${scaleY(d.weight_kg)}`).join(' ') +
       ` ${scaleX(data.length - 1)},${chartH - padB}`;
-
     return (
       <View style={{ alignItems: 'center' }}>
         <svg width={chartW} height={chartH} viewBox={`0 0 ${chartW} ${chartH}`}>
@@ -505,7 +533,6 @@ export default function HealthScreen({ navigation }) {
     const maxCal = Math.max(...last7.map(l => l.calories || 0), macroTargets?.calories || 1);
     const scaleY = (v) => padT + ((maxCal - v) / maxCal) * (chartH - padT - padB);
     const barColors = { protein_g: '#FF6B6B', carbs_g: '#4ECDC4', fats_g: '#FFE66D' };
-
     return (
       <View style={{ alignItems: 'center' }}>
         <svg width={chartW} height={chartH}>
@@ -618,14 +645,15 @@ export default function HealthScreen({ navigation }) {
   const weightChange = weightLogs.length >= 2
     ? (weightLogs[weightLogs.length - 1].weight_kg - weightLogs[0].weight_kg).toFixed(1)
     : null;
+  const activeCarbPlan = getActiveCarbPlan();
+  const todayCarbTargets = getTodayCarbTargets(activeCarbPlan);
 
-  const mainTabs = ['weight', 'macros', ...(isFemale ? ['cycle'] : [])];
-  const mainTabLabels = ['⚖️ Weight', '🥗 Macros', ...(isFemale ? ['🌸 Cycle'] : [])];
+  const mainTabs = ['weight', 'macros', 'carbcycle', ...(isFemale ? ['cycle'] : [])];
+  const mainTabLabels = ['⚖️ Weight', '🥗 Macros', '🔄 Carb Cycle', ...(isFemale ? ['🌸 Cycle'] : [])];
 
   return (
     <View style={styles.container}>
 
-      {/* Retagging overlay */}
       {retagging && (
         <View style={styles.retaggingOverlay}>
           <View style={styles.retaggingCard}>
@@ -697,7 +725,6 @@ export default function HealthScreen({ navigation }) {
               <Text style={styles.actionBtnText}>+ Log Weigh-in</Text>
             </TouchableOpacity>
 
-            {/* Weight calendar */}
             <View style={styles.calendarCard}>
               <View style={styles.calNav}>
                 <TouchableOpacity onPress={() => setCalendarMonth(m =>
@@ -1006,10 +1033,188 @@ export default function HealthScreen({ navigation }) {
           </View>
         )}
 
+        {/* ═══ CARB CYCLE TAB ═══ */}
+        {mainTab === 'carbcycle' && (
+          <View>
+            {!activeCarbPlan ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>No carb cycling plan</Text>
+                <Text style={styles.emptySub}>
+                  Ask your coach to create a carb cycling plan for you
+                </Text>
+              </View>
+            ) : (
+              <View>
+                {/* Today's targets */}
+                {todayCarbTargets && todayCarbTargets.dayType !== 'none' ? (
+                  <View style={[styles.ccTodayCard, {
+                    borderColor: CC_DAY_COLORS[todayCarbTargets.dayType]
+                  }]}>
+                    <Text style={styles.ccTodayLabel}>📅 TODAY — {todayCarbTargets.todayName}</Text>
+                    <View style={[styles.ccDayBadge, {
+                      backgroundColor: CC_DAY_COLORS[todayCarbTargets.dayType] + '33'
+                    }]}>
+                      <Text style={[styles.ccDayBadgeText, {
+                        color: CC_DAY_COLORS[todayCarbTargets.dayType]
+                      }]}>
+                        {todayCarbTargets.dayType.toUpperCase()} CARB DAY
+                      </Text>
+                    </View>
+                    <View style={styles.ccTodayMacros}>
+                      {[
+                        { label: 'Carbs', val: todayCarbTargets.carbG, unit: 'g', color: '#4ECDC4' },
+                        { label: 'Protein', val: activeCarbPlan.protein_g_daily, unit: 'g', color: '#FF6B6B' },
+                        { label: 'Fats', val: activeCarbPlan.fats_g_daily, unit: 'g', color: '#FFE66D' },
+                        { label: 'Total', val: todayCarbTargets.cals, unit: 'kcal', color: COLORS.roseGold },
+                      ].map(m => (
+                        <View key={m.label} style={styles.ccMacroPill}>
+                          <Text style={[styles.ccMacroPillVal, { color: m.color }]}>
+                            {m.val}{m.unit}
+                          </Text>
+                          <Text style={styles.ccMacroPillLabel}>{m.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Compare with today's logged food */}
+                    {todayMacroLog && (
+                      <View style={styles.ccCompareCard}>
+                        <Text style={styles.ccCompareTitle}>📊 Today's Progress</Text>
+                        {[
+                          { label: 'Carbs', logged: todayMacroLog.carbs_g, target: todayCarbTargets.carbG, color: '#4ECDC4' },
+                          { label: 'Protein', logged: todayMacroLog.protein_g, target: activeCarbPlan.protein_g_daily, color: '#FF6B6B' },
+                          { label: 'Fats', logged: todayMacroLog.fats_g, target: activeCarbPlan.fats_g_daily, color: '#FFE66D' },
+                          { label: 'Calories', logged: todayMacroLog.calories, target: todayCarbTargets.cals, color: COLORS.roseGold },
+                        ].map(m => {
+                          const pct = Math.min((m.logged / m.target) * 100, 100);
+                          const over = m.logged > m.target * 1.05;
+                          return (
+                            <View key={m.label} style={styles.ccProgressRow}>
+                              <Text style={[styles.ccProgressLabel, { color: m.color }]}>{m.label}</Text>
+                              <View style={styles.ccProgressBarBg}>
+                                <View style={[styles.ccProgressBarFill, {
+                                  width: `${pct}%`,
+                                  backgroundColor: over ? '#FF4B4B' : m.color,
+                                }]} />
+                              </View>
+                              <Text style={[styles.ccProgressText, { color: over ? '#FF4B4B' : m.color }]}>
+                                {m.logged}/{m.target}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.ccRestDayCard}>
+                    <Text style={styles.ccRestDayEmoji}>😴</Text>
+                    <Text style={styles.ccRestDayTitle}>Rest Day</Text>
+                    <Text style={styles.ccRestDaySub}>
+                      {todayCarbTargets?.todayName} — no specific carb targets today
+                    </Text>
+                    <Text style={styles.ccRestDayMacros}>
+                      Maintain: P:{activeCarbPlan.protein_g_daily}g · F:{activeCarbPlan.fats_g_daily}g
+                    </Text>
+                  </View>
+                )}
+
+                {/* Plan info */}
+                <View style={styles.ccPlanInfoCard}>
+                  <Text style={styles.ccPlanInfoTitle}>📋 {activeCarbPlan.name}</Text>
+                  {activeCarbPlan.description && (
+                    <Text style={styles.ccPlanInfoDesc}>{activeCarbPlan.description}</Text>
+                  )}
+                  <Text style={styles.ccPlanInfoMeta}>
+                    Weekly: {activeCarbPlan.weekly_calories} kcal ·
+                    P:{activeCarbPlan.protein_g_daily}g daily ·
+                    F:{activeCarbPlan.fats_g_daily}g daily
+                  </Text>
+                </View>
+
+                {/* Full 7-day overview */}
+                <Text style={styles.sectionTitle}>📅 Full Week Schedule</Text>
+                <View style={styles.ccWeekGrid}>
+                  {DAYS_ORDERED.map(day => {
+                    const dayType = getDayCarbType(activeCarbPlan, day);
+                    const carbG = dayType === 'high' ? activeCarbPlan.high_carb_g
+                      : dayType === 'medium' ? activeCarbPlan.medium_carb_g
+                      : dayType === 'low' ? activeCarbPlan.low_carb_g : null;
+                    const cals = dayType === 'high' ? activeCarbPlan.high_carb_calories
+                      : dayType === 'medium' ? activeCarbPlan.medium_carb_calories
+                      : dayType === 'low' ? activeCarbPlan.low_carb_calories : null;
+                    const isToday = DAYS_ORDERED[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1] === day;
+                    return (
+                      <View key={day} style={[styles.ccDayCard, {
+                        borderColor: isToday ? COLORS.white : CC_DAY_COLORS[dayType],
+                        backgroundColor: CC_DAY_COLORS[dayType] + '11',
+                        borderWidth: isToday ? 2 : 1,
+                      }]}>
+                        <Text style={[styles.ccDayCardName, isToday && { color: COLORS.white }]}>
+                          {day.slice(0, 3)}
+                        </Text>
+                        {isToday && (
+                          <View style={styles.ccTodayDot} />
+                        )}
+                        <Text style={[styles.ccDayCardType, { color: CC_DAY_COLORS[dayType] }]}>
+                          {dayType === 'none' ? '—'
+                            : dayType === 'high' ? 'H'
+                            : dayType === 'medium' ? 'M' : 'L'}
+                        </Text>
+                        {carbG && (
+                          <Text style={styles.ccDayCardCarbs}>{carbG}g C</Text>
+                        )}
+                        {cals && (
+                          <Text style={styles.ccDayCardCals}>{cals}</Text>
+                        )}
+                        {!carbG && (
+                          <Text style={styles.ccDayCardRest}>Rest</Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Per-type breakdown */}
+                <Text style={styles.sectionTitle}>Macro Breakdown by Day Type</Text>
+                {[
+                  { type: 'high', label: 'High Carb Day', carbG: activeCarbPlan.high_carb_g, cals: activeCarbPlan.high_carb_calories, days: activeCarbPlan.high_carb_days },
+                  { type: 'medium', label: 'Medium Carb Day', carbG: activeCarbPlan.medium_carb_g, cals: activeCarbPlan.medium_carb_calories, days: activeCarbPlan.medium_carb_days },
+                  { type: 'low', label: 'Low Carb Day', carbG: activeCarbPlan.low_carb_g, cals: activeCarbPlan.low_carb_calories, days: activeCarbPlan.low_carb_days },
+                ].filter(t => (t.days || []).length > 0).map(t => (
+                  <View key={t.type} style={[styles.ccTypeCard, {
+                    borderColor: CC_DAY_COLORS[t.type],
+                    backgroundColor: CC_DAY_COLORS[t.type] + '11',
+                  }]}>
+                    <Text style={[styles.ccTypeTitle, { color: CC_DAY_COLORS[t.type] }]}>
+                      {t.label}
+                    </Text>
+                    <View style={styles.ccTypeMacros}>
+                      {[
+                        { label: 'Carbs', val: `${t.carbG}g`, color: '#4ECDC4' },
+                        { label: 'Protein', val: `${activeCarbPlan.protein_g_daily}g`, color: '#FF6B6B' },
+                        { label: 'Fats', val: `${activeCarbPlan.fats_g_daily}g`, color: '#FFE66D' },
+                        { label: 'Total', val: `${t.cals} kcal`, color: COLORS.roseGold },
+                      ].map(m => (
+                        <View key={m.label} style={styles.ccTypeCol}>
+                          <Text style={[styles.ccTypeVal, { color: m.color }]}>{m.val}</Text>
+                          <Text style={styles.ccTypeLabel}>{m.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <Text style={styles.ccTypeDays}>
+                      📅 {(t.days || []).join(' · ')}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         {/* ═══ CYCLE TAB ═══ */}
         {mainTab === 'cycle' && (
           <View>
-            {/* Current phase banner */}
             {currentPhaseData ? (
               <View style={[styles.currentPhaseCard, { borderColor: currentPhaseData.color }]}>
                 <View style={styles.currentPhaseHeader}>
@@ -1022,7 +1227,6 @@ export default function HealthScreen({ navigation }) {
                       Day {currentPhaseData.dayInPhase} of cycle
                     </Text>
                   </View>
-                  {/* Phase Progress link */}
                   {navigation && (
                     <TouchableOpacity
                       style={[styles.phaseProgressBtn, { borderColor: currentPhaseData.color }]}
@@ -1061,7 +1265,6 @@ export default function HealthScreen({ navigation }) {
               <Text style={styles.actionBtnText}>+ Log Period / New Cycle</Text>
             </TouchableOpacity>
 
-            {/* Phase legend */}
             <View style={styles.phaseLegendRow}>
               {Object.values(CYCLE_PHASES).map(ph => (
                 <View key={ph.name} style={styles.phaseLegendItem}>
@@ -1071,7 +1274,6 @@ export default function HealthScreen({ navigation }) {
               ))}
             </View>
 
-            {/* Cycle calendar */}
             <View style={styles.calendarCard}>
               <View style={styles.calNav}>
                 <TouchableOpacity onPress={() => setCalendarMonth(m =>
@@ -1120,7 +1322,6 @@ export default function HealthScreen({ navigation }) {
               </View>
             </View>
 
-            {/* Phase recommendation cards */}
             {Object.values(CYCLE_PHASES).map(phase => (
               <TouchableOpacity key={phase.name}
                 style={[styles.phaseRecCard, { borderColor: phase.color }]}
@@ -1135,7 +1336,6 @@ export default function HealthScreen({ navigation }) {
               </TouchableOpacity>
             ))}
 
-            {/* Cycle history with edit/delete */}
             {cycles.length > 0 && (
               <View>
                 <Text style={styles.sectionTitle}>Cycle History</Text>
@@ -1208,7 +1408,6 @@ export default function HealthScreen({ navigation }) {
           <View style={[styles.modalCard, { maxHeight: '90%' }]}>
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.modalTitle}>🍽️ Log Food</Text>
-
               <Text style={styles.modalLabel}>Meal</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}
                 style={{ marginBottom: 12 }}>
@@ -1220,7 +1419,6 @@ export default function HealthScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-
               <View style={styles.modeToggle}>
                 {[['search','🔍 Search'],['custom','✏️ Manual']].map(([k,l]) => (
                   <TouchableOpacity key={k}
@@ -1230,7 +1428,6 @@ export default function HealthScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </View>
-
               {foodInputMode === 'search' && (
                 <View>
                   <RNTextInput value={foodSearch} onChangeText={setFoodSearch}
@@ -1299,7 +1496,6 @@ export default function HealthScreen({ navigation }) {
                   )}
                 </View>
               )}
-
               {foodInputMode === 'custom' && (
                 <View>
                   <Text style={styles.modalLabel}>Food Name *</Text>
@@ -1339,7 +1535,6 @@ export default function HealthScreen({ navigation }) {
                   )}
                 </View>
               )}
-
               <View style={styles.modalBtns}>
                 <TouchableOpacity style={styles.modalCancelBtn}
                   onPress={() => setShowFoodModal(false)}>
@@ -1597,6 +1792,50 @@ const styles = StyleSheet.create({
   foodEntryName: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
   foodEntryMacros: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   mealTotal: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold, textAlign: 'right', marginTop: 6 },
+  empty: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 32, alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: COLORS.darkBorder },
+  emptyText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.lg },
+  emptySub: { color: COLORS.textMuted, fontSize: SIZES.sm, textAlign: 'center', marginTop: 4 },
+  // Carb cycling styles
+  ccTodayCard: { borderRadius: RADIUS.lg, padding: 16, marginBottom: 16, borderWidth: 2, backgroundColor: COLORS.darkCard },
+  ccTodayLabel: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
+  ccDayBadge: { borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 14 },
+  ccDayBadgeText: { ...FONTS.heavy, fontSize: SIZES.sm },
+  ccTodayMacros: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  ccMacroPill: { flex: 1, backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 10, alignItems: 'center' },
+  ccMacroPillVal: { fontSize: SIZES.md, ...FONTS.bold },
+  ccMacroPillLabel: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
+  ccCompareCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
+  ccCompareTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 10 },
+  ccProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  ccProgressLabel: { width: 54, fontSize: SIZES.xs, ...FONTS.semibold },
+  ccProgressBarBg: { flex: 1, height: 6, backgroundColor: COLORS.darkCard, borderRadius: 3, overflow: 'hidden' },
+  ccProgressBarFill: { height: 6, borderRadius: 3 },
+  ccProgressText: { width: 72, fontSize: 9, ...FONTS.semibold, textAlign: 'right' },
+  ccRestDayCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 24, alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: COLORS.darkBorder },
+  ccRestDayEmoji: { fontSize: 32, marginBottom: 8 },
+  ccRestDayTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xl },
+  ccRestDaySub: { color: COLORS.textMuted, fontSize: SIZES.sm, marginTop: 4, textAlign: 'center' },
+  ccRestDayMacros: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold, marginTop: 8 },
+  ccPlanInfoCard: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: COLORS.darkBorder },
+  ccPlanInfoTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 4 },
+  ccPlanInfoDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 4, fontStyle: 'italic' },
+  ccPlanInfoMeta: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
+  ccWeekGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 16 },
+  ccDayCard: { width: '13%', borderRadius: RADIUS.sm, padding: 6, alignItems: 'center', borderWidth: 1 },
+  ccDayCardName: { color: COLORS.textMuted, fontSize: 8, marginBottom: 2 },
+  ccTodayDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.white, marginBottom: 2 },
+  ccDayCardType: { fontSize: SIZES.md, ...FONTS.heavy },
+  ccDayCardCarbs: { color: COLORS.white, fontSize: 8, marginTop: 2 },
+  ccDayCardCals: { color: COLORS.textMuted, fontSize: 7, marginTop: 1 },
+  ccDayCardRest: { color: COLORS.textMuted, fontSize: 8, marginTop: 2 },
+  ccTypeCard: { borderRadius: RADIUS.md, padding: 14, marginBottom: 10, borderWidth: 1 },
+  ccTypeTitle: { fontSize: SIZES.md, ...FONTS.bold, marginBottom: 10 },
+  ccTypeMacros: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  ccTypeCol: { flex: 1, alignItems: 'center' },
+  ccTypeVal: { fontSize: SIZES.md, ...FONTS.bold },
+  ccTypeLabel: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
+  ccTypeDays: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 4 },
+  // Cycle styles
   currentPhaseCard: { borderRadius: RADIUS.lg, padding: 16, marginBottom: 12, borderWidth: 2, backgroundColor: COLORS.darkCard },
   currentPhaseHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
   currentPhaseEmoji: { fontSize: 28 },
@@ -1633,8 +1872,6 @@ const styles = StyleSheet.create({
   phaseDetailDesc: { color: COLORS.textSecondary, fontSize: SIZES.sm, lineHeight: 18, marginBottom: 12, fontStyle: 'italic' },
   phaseDetailSection: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 6, marginTop: 8 },
   phaseItem: { color: COLORS.textSecondary, fontSize: SIZES.xs, lineHeight: 18, marginBottom: 3 },
-  empty: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: COLORS.darkBorder },
-  emptyText: { color: COLORS.textMuted, fontSize: SIZES.sm },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.darkCard, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40 },
   modalTitle: { color: COLORS.white, ...FONTS.heavy, fontSize: SIZES.xl, marginBottom: 16 },
