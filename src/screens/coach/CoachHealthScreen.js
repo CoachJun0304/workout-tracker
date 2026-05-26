@@ -31,6 +31,12 @@ const GOAL_DEFAULTS = {
 };
 const CC_DAY_COLORS = { high: '#FF6B6B', medium: '#FFE66D', low: '#4ECDC4', none: COLORS.darkBorder };
 const CC_DAY_LABELS = { high: 'H', medium: 'M', low: 'L', none: '—' };
+const CC_DAY_TYPE_INFO = {
+  high: { label: '🔴 High Carb Day', color: '#FF6B6B' },
+  medium: { label: '🟡 Medium Carb Day', color: '#FFE66D' },
+  low: { label: '🔵 Low Carb Day', color: '#4ECDC4' },
+  none: { label: '— Not Linked', color: COLORS.textMuted },
+};
 
 export default function CoachHealthScreen({ route, navigation }) {
   const { client } = route.params || {};
@@ -103,6 +109,8 @@ export default function CoachHealthScreen({ route, navigation }) {
   const [applyPlanDate, setApplyPlanDate] = useState(todayStr);
   const [applyPlanReplace, setApplyPlanReplace] = useState(false);
   const [expandedPlanId, setExpandedPlanId] = useState(null);
+  const [planCarbDayType, setPlanCarbDayType] = useState('none');
+  const [planCarbCyclePlanId, setPlanCarbCyclePlanId] = useState(null);
 
   // Cycle edit modals
   const [showEditCycleModal, setShowEditCycleModal] = useState(false);
@@ -396,6 +404,8 @@ export default function CoachHealthScreen({ route, navigation }) {
     setPlanName(''); setPlanGoal(''); setPlanDesc('');
     setPlanIsShared(false); setPlanItems([]);
     setPlanItemStep('list');
+    setPlanCarbDayType('none');
+    setPlanCarbCyclePlanId(activeCarbPlan?.id || null);
     setShowMealPlanModal(true);
   }
 
@@ -406,6 +416,8 @@ export default function CoachHealthScreen({ route, navigation }) {
     setPlanIsShared(plan.is_shared || false);
     setPlanItems(plan.meal_plan_items || []);
     setPlanItemStep('list');
+    setPlanCarbDayType(plan.carb_cycle_day_type || 'none');
+    setPlanCarbCyclePlanId(plan.carb_cycle_plan_id || null);
     setShowMealPlanModal(true);
   }
 
@@ -441,6 +453,11 @@ export default function CoachHealthScreen({ route, navigation }) {
       calories: acc.calories + (e.calories || 0),
     }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
 
+    const carbLink = planCarbDayType !== 'none' ? {
+      carb_cycle_day_type: planCarbDayType,
+      carb_cycle_plan_id: planCarbCyclePlanId || activeCarbPlan?.id || null,
+    } : { carb_cycle_day_type: null, carb_cycle_plan_id: null };
+
     let planId;
     if (editingPlan) {
       const { error } = await supabase.from('meal_plan_templates').update({
@@ -448,6 +465,7 @@ export default function CoachHealthScreen({ route, navigation }) {
         goal: planGoal || null, is_shared: planIsShared,
         total_calories: totals.calories, total_protein_g: totals.protein,
         total_carbs_g: totals.carbs, total_fats_g: totals.fats,
+        ...carbLink,
       }).eq('id', editingPlan.id);
       if (error) { setLoading(false); showAlert('Error', error.message); return; }
       await supabase.from('meal_plan_items').delete().eq('template_id', editingPlan.id);
@@ -459,6 +477,7 @@ export default function CoachHealthScreen({ route, navigation }) {
         client_id: client.id, created_by: profile.id,
         total_calories: totals.calories, total_protein_g: totals.protein,
         total_carbs_g: totals.carbs, total_fats_g: totals.fats,
+        ...carbLink,
       }).select().single();
       if (error) { setLoading(false); showAlert('Error', error.message); return; }
       planId = data?.id;
@@ -519,7 +538,6 @@ export default function CoachHealthScreen({ route, navigation }) {
     setEditingCarbPlan(null);
     setCcName('');
     setCcDesc('');
-    // Auto-populate from client's macro targets
     setCcWeeklyCals(macroTargets ? String(Math.round(macroTargets.calories * 7)) : '');
     setCcProtein(macroTargets ? String(Math.round(macroTargets.protein_g)) : '');
     setCcFats(macroTargets ? String(Math.round(macroTargets.fats_g)) : '');
@@ -690,7 +708,7 @@ export default function CoachHealthScreen({ route, navigation }) {
     return { plan: activePlan, dayType, carbG, cals, todayName };
   }
 
-  // ── TDEE → CARB CYCLE integration ────────────────────
+  // ── TDEE → CARB CYCLE ─────────────────────────────────
 
   function applyTdeeToCarb() {
     let protein, fats, targetCals;
@@ -915,6 +933,19 @@ export default function CoachHealthScreen({ route, navigation }) {
   const tabLabels = ['⚖️ Weight', '🥗 Macros', '🍽️ Food Log', '📋 Meal Plans', '🔄 Carb Cycle', '🔢 TDEE', '💬 Feedback', ...(isFemale ? ['🌸 Cycle'] : [])];
   const todayCarbTargets = getTodayCarbCycleTargets();
   const activeCarbPlan = carbCyclePlans.find(p => p.is_active);
+
+  // Get linked meal plan for today's carb type
+  function getLinkedMealPlanForDay(dayType) {
+    if (!dayType || dayType === 'none') return null;
+    return mealPlanTemplates.find(p =>
+      p.carb_cycle_day_type === dayType &&
+      (p.carb_cycle_plan_id === activeCarbPlan?.id || !p.carb_cycle_plan_id)
+    ) || null;
+  }
+
+  const todayLinkedPlan = todayCarbTargets
+    ? getLinkedMealPlanForDay(todayCarbTargets.dayType)
+    : null;
 
   return (
     <View style={styles.container}>
@@ -1159,6 +1190,35 @@ export default function CoachHealthScreen({ route, navigation }) {
             <TouchableOpacity style={styles.actionBtn} onPress={openNewPlan}>
               <Text style={styles.actionBtnText}>+ Create New Meal Plan</Text>
             </TouchableOpacity>
+
+            {/* Carb cycle linked plans summary */}
+            {activeCarbPlan && (
+              <View style={styles.ccLinkedSummary}>
+                <Text style={styles.ccLinkedSummaryTitle}>
+                  🔄 Linked to: {activeCarbPlan.name}
+                </Text>
+                {['high','medium','low'].map(type => {
+                  const linked = getLinkedMealPlanForDay(type);
+                  return (
+                    <View key={type} style={styles.ccLinkedRow}>
+                      <View style={[styles.ccLinkedDot, { backgroundColor: CC_DAY_COLORS[type] }]} />
+                      <Text style={[styles.ccLinkedType, { color: CC_DAY_COLORS[type] }]}>
+                        {type.charAt(0).toUpperCase() + type.slice(1)} Carb
+                      </Text>
+                      <Text style={styles.ccLinkedPlan}>
+                        {linked ? linked.name : '— No plan linked'}
+                      </Text>
+                      {linked && (
+                        <TouchableOpacity onPress={() => openEditPlan(linked)}>
+                          <Text style={styles.ccLinkedEdit}>✏️</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
             {mealPlanTemplates.length === 0
               ? <View style={styles.empty}>
                   <Text style={styles.emptyText}>No meal plans yet</Text>
@@ -1176,12 +1236,29 @@ export default function CoachHealthScreen({ route, navigation }) {
                   const totalC = items.reduce((s, i) => s + (i.carbs_g || 0), 0);
                   const totalF = items.reduce((s, i) => s + (i.fats_g || 0), 0);
                   const isExpanded = expandedPlanId === plan.id;
+                  const dayTypeInfo = plan.carb_cycle_day_type
+                    ? CC_DAY_TYPE_INFO[plan.carb_cycle_day_type] : null;
                   return (
-                    <View key={plan.id} style={styles.planCard}>
+                    <View key={plan.id} style={[styles.planCard,
+                      dayTypeInfo && { borderLeftColor: CC_DAY_COLORS[plan.carb_cycle_day_type], borderLeftWidth: 3 }]}>
                       <TouchableOpacity style={styles.planHeader}
                         onPress={() => setExpandedPlanId(isExpanded ? null : plan.id)}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.planName}>{plan.name}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <Text style={styles.planName}>{plan.name}</Text>
+                            {dayTypeInfo && (
+                              <View style={[styles.ccDayTypePlanBadge, {
+                                backgroundColor: CC_DAY_COLORS[plan.carb_cycle_day_type] + '33',
+                                borderColor: CC_DAY_COLORS[plan.carb_cycle_day_type],
+                              }]}>
+                                <Text style={[styles.ccDayTypePlanBadgeText, {
+                                  color: CC_DAY_COLORS[plan.carb_cycle_day_type]
+                                }]}>
+                                  {dayTypeInfo.label}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                           {plan.description && <Text style={styles.planDesc}>{plan.description}</Text>}
                           <View style={styles.planMacroRow}>
                             <Text style={[styles.planMacroText, { color: '#FF6B6B' }]}>P:{totalP.toFixed(0)}g</Text>
@@ -1289,6 +1366,26 @@ export default function CoachHealthScreen({ route, navigation }) {
                     <Text style={styles.ccMacroPillLabel}>kcal</Text>
                   </View>
                 </View>
+                {todayLinkedPlan && (
+                  <View style={styles.ccLinkedMealPlanCard}>
+                    <Text style={styles.ccLinkedMealPlanTitle}>
+                      📋 Linked Meal Plan: {todayLinkedPlan.name}
+                    </Text>
+                    <Text style={styles.ccLinkedMealPlanSub}>
+                      {(todayLinkedPlan.meal_plan_items || []).length} items ·
+                      {todayLinkedPlan.total_calories?.toFixed(0) || 0} kcal
+                    </Text>
+                    <TouchableOpacity style={styles.ccLinkedMealPlanBtn}
+                      onPress={() => {
+                        setApplyPlanTarget(todayLinkedPlan);
+                        setApplyPlanDate(todayStr);
+                        setApplyPlanReplace(false);
+                        setShowApplyPlanModal(true);
+                      }}>
+                      <Text style={styles.ccLinkedMealPlanBtnText}>✅ Apply to Today</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             )}
 
@@ -1299,7 +1396,7 @@ export default function CoachHealthScreen({ route, navigation }) {
             {!macroTargets && (
               <View style={styles.ccNoTargetsWarning}>
                 <Text style={styles.ccNoTargetsText}>
-                  ⚠️ No macro targets set for {client.name}. Set targets first via the Macros tab or TDEE tab — carb cycling will auto-populate from them.
+                  ⚠️ No macro targets set for {client.name}. Set targets first via the Macros tab or TDEE tab.
                 </Text>
               </View>
             )}
@@ -1351,6 +1448,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                               const cals = dayType === 'high' ? plan.high_carb_calories
                                 : dayType === 'medium' ? plan.medium_carb_calories
                                 : dayType === 'low' ? plan.low_carb_calories : null;
+                              const linkedPlan = getLinkedMealPlanForDay(dayType);
                               return (
                                 <View key={day} style={[styles.ccDayCard, {
                                   borderColor: CC_DAY_COLORS[dayType],
@@ -1364,32 +1462,51 @@ export default function CoachHealthScreen({ route, navigation }) {
                                   </Text>
                                   {carbG && <Text style={styles.ccDayCarbG}>{carbG}g C</Text>}
                                   {cals && <Text style={styles.ccDayCals}>{cals} kcal</Text>}
+                                  {linkedPlan && <Text style={styles.ccDayLinked}>📋</Text>}
                                 </View>
                               );
                             })}
                           </View>
 
-                          <View style={styles.ccSummaryRow}>
-                            {[
-                              { type: 'high', label: 'High Carb', carbG: plan.high_carb_g, cals: plan.high_carb_calories, days: plan.high_carb_days },
-                              { type: 'medium', label: 'Med Carb', carbG: plan.medium_carb_g, cals: plan.medium_carb_calories, days: plan.medium_carb_days },
-                              { type: 'low', label: 'Low Carb', carbG: plan.low_carb_g, cals: plan.low_carb_calories, days: plan.low_carb_days },
-                            ].filter(t => (t.days || []).length > 0).map(t => (
-                              <View key={t.type} style={[styles.ccSummaryCard, {
-                                borderColor: CC_DAY_COLORS[t.type],
-                                backgroundColor: CC_DAY_COLORS[t.type] + '11',
+                          {/* Linked meal plans per type */}
+                          <Text style={styles.ccWeekTitle}>📋 Linked Meal Plans</Text>
+                          {['high','medium','low'].map(type => {
+                            const linked = getLinkedMealPlanForDay(type);
+                            const daysOfType = type === 'high' ? plan.high_carb_days
+                              : type === 'medium' ? plan.medium_carb_days
+                              : plan.low_carb_days;
+                            if (!(daysOfType || []).length) return null;
+                            return (
+                              <View key={type} style={[styles.ccLinkedPlanRow, {
+                                borderColor: CC_DAY_COLORS[type]
                               }]}>
-                                <Text style={[styles.ccSummaryType, { color: CC_DAY_COLORS[t.type] }]}>
-                                  {t.label}
-                                </Text>
-                                <Text style={styles.ccSummaryVal}>{t.carbG}g carbs</Text>
-                                <Text style={styles.ccSummaryCals}>{t.cals} kcal</Text>
-                                <Text style={styles.ccSummaryDays}>
-                                  {(t.days || []).map(d => d.slice(0, 3)).join(', ')}
-                                </Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={[styles.ccLinkedPlanType, { color: CC_DAY_COLORS[type] }]}>
+                                    {CC_DAY_TYPE_INFO[type].label}
+                                  </Text>
+                                  <Text style={styles.ccLinkedPlanName}>
+                                    {linked ? linked.name : '— No meal plan linked'}
+                                  </Text>
+                                </View>
+                                <TouchableOpacity
+                                  style={styles.ccLinkPlanBtn}
+                                  onPress={() => {
+                                    if (linked) {
+                                      openEditPlan(linked);
+                                    } else {
+                                      openNewPlan();
+                                      setPlanCarbDayType(type);
+                                      setPlanCarbCyclePlanId(plan.id);
+                                      setPlanName(`${client.name} - ${CC_DAY_TYPE_INFO[type].label}`);
+                                    }
+                                  }}>
+                                  <Text style={styles.ccLinkPlanBtnText}>
+                                    {linked ? '✏️ Edit' : '+ Create'}
+                                  </Text>
+                                </TouchableOpacity>
                               </View>
-                            ))}
-                          </View>
+                            );
+                          })}
 
                           <View style={styles.planActions}>
                             <TouchableOpacity style={styles.planApplyBtn}
@@ -1645,8 +1762,6 @@ export default function CoachHealthScreen({ route, navigation }) {
                     </Text>
                   </View>
                 )}
-
-                {/* Action buttons */}
                 <TouchableOpacity
                   style={[styles.tdeeApplyBtn, loading && { opacity: 0.6 }]}
                   onPress={applyTdeeAsTargets} disabled={loading}>
@@ -1654,11 +1769,7 @@ export default function CoachHealthScreen({ route, navigation }) {
                     {loading ? 'Applying...' : `✅ Apply as Macro Targets for ${client.name}`}
                   </Text>
                 </TouchableOpacity>
-
-                {/* NEW: Apply to Carb Cycle */}
-                <TouchableOpacity
-                  style={styles.tdeeCarbCycleBtn}
-                  onPress={applyTdeeToCarb}>
+                <TouchableOpacity style={styles.tdeeCarbCycleBtn} onPress={applyTdeeToCarb}>
                   <Text style={styles.tdeeCarbCycleBtnText}>
                     🔄 Create Carb Cycle from this TDEE
                   </Text>
@@ -2118,27 +2229,62 @@ export default function CoachHealthScreen({ route, navigation }) {
                 </View>
               )}
 
-              {/* Carb cycle guide if active */}
+              {/* Carb cycle day type linking */}
               {activeCarbPlan && (
-                <View style={styles.mpCarbCycleGuide}>
-                  <Text style={styles.mpTargetGuideTitle}>🔄 Active Carb Cycle: {activeCarbPlan.name}</Text>
-                  {[
-                    { type: 'high', label: 'High Day', carbG: activeCarbPlan.high_carb_g, cals: activeCarbPlan.high_carb_calories, days: activeCarbPlan.high_carb_days },
-                    { type: 'medium', label: 'Med Day', carbG: activeCarbPlan.medium_carb_g, cals: activeCarbPlan.medium_carb_calories, days: activeCarbPlan.medium_carb_days },
-                    { type: 'low', label: 'Low Day', carbG: activeCarbPlan.low_carb_g, cals: activeCarbPlan.low_carb_calories, days: activeCarbPlan.low_carb_days },
-                  ].filter(t => (t.days || []).length > 0).map(t => (
-                    <View key={t.type} style={styles.mpCarbCycleRow}>
-                      <Text style={[styles.mpCarbCycleType, { color: CC_DAY_COLORS[t.type] }]}>
-                        {t.label}
-                      </Text>
-                      <Text style={styles.mpCarbCycleVal}>
-                        C:{t.carbG}g · P:{activeCarbPlan.protein_g_daily}g · F:{activeCarbPlan.fats_g_daily}g · {t.cals}kcal
-                      </Text>
-                      <Text style={styles.mpCarbCycleDays}>
-                        {(t.days || []).map(d => d.slice(0,3)).join(' ')}
+                <View style={styles.mpCarbLinkSection}>
+                  <Text style={styles.mpTargetGuideTitle}>
+                    🔄 Link to Carb Cycle Day Type
+                  </Text>
+                  <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 10 }}>
+                    Link this meal plan to a day type in "{activeCarbPlan.name}"
+                  </Text>
+                  <View style={styles.mpCarbLinkRow}>
+                    {[
+                      { type: 'none', label: '— Not linked', cals: null, carbs: null },
+                      { type: 'high', label: '🔴 High', cals: activeCarbPlan.high_carb_calories, carbs: activeCarbPlan.high_carb_g },
+                      { type: 'medium', label: '🟡 Medium', cals: activeCarbPlan.medium_carb_calories, carbs: activeCarbPlan.medium_carb_g },
+                      { type: 'low', label: '🔵 Low', cals: activeCarbPlan.low_carb_calories, carbs: activeCarbPlan.low_carb_g },
+                    ].map(t => (
+                      <TouchableOpacity key={t.type}
+                        style={[styles.mpCarbLinkChip, {
+                          backgroundColor: planCarbDayType === t.type
+                            ? (CC_DAY_COLORS[t.type] || COLORS.roseGold)
+                            : 'transparent',
+                          borderColor: CC_DAY_COLORS[t.type] || COLORS.darkBorder,
+                        }]}
+                        onPress={() => setPlanCarbDayType(t.type)}>
+                        <Text style={[styles.mpCarbLinkChipText, {
+                          color: planCarbDayType === t.type
+                            ? COLORS.white
+                            : (CC_DAY_COLORS[t.type] || COLORS.textMuted)
+                        }]}>
+                          {t.label}
+                        </Text>
+                        {t.cals && (
+                          <Text style={[styles.mpCarbLinkChipSub, {
+                            color: planCarbDayType === t.type ? 'rgba(255,255,255,0.8)' : COLORS.textMuted
+                          }]}>
+                            {t.carbs}g C · {t.cals}kcal
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {planCarbDayType !== 'none' && (
+                    <View style={styles.mpCarbTargetHint}>
+                      <Text style={styles.mpCarbTargetHintText}>
+                        Target for {planCarbDayType} day:
+                        C:{planCarbDayType === 'high' ? activeCarbPlan.high_carb_g
+                          : planCarbDayType === 'medium' ? activeCarbPlan.medium_carb_g
+                          : activeCarbPlan.low_carb_g}g ·
+                        P:{activeCarbPlan.protein_g_daily}g ·
+                        F:{activeCarbPlan.fats_g_daily}g ·
+                        {planCarbDayType === 'high' ? activeCarbPlan.high_carb_calories
+                          : planCarbDayType === 'medium' ? activeCarbPlan.medium_carb_calories
+                          : activeCarbPlan.low_carb_calories}kcal
                       </Text>
                     </View>
-                  ))}
+                  )}
                 </View>
               )}
 
@@ -2695,17 +2841,41 @@ const styles = StyleSheet.create({
   replaceDesc: { color: COLORS.textMuted, fontSize: SIZES.xs, marginTop: 2 },
   applyPlanSummary: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
   applyPlanSummaryText: { color: COLORS.roseGold, fontSize: SIZES.sm, ...FONTS.semibold },
+  // Meal plan linked styles
+  ccLinkedSummary: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.lg, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  ccLinkedSummaryTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 10 },
+  ccLinkedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
+  ccLinkedDot: { width: 8, height: 8, borderRadius: 4 },
+  ccLinkedType: { width: 80, fontSize: SIZES.xs, ...FONTS.bold },
+  ccLinkedPlan: { flex: 1, color: COLORS.textSecondary, fontSize: SIZES.xs },
+  ccLinkedEdit: { fontSize: 14 },
+  ccDayTypePlanBadge: { borderRadius: RADIUS.full, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+  ccDayTypePlanBadgeText: { fontSize: 9, ...FONTS.bold },
+  ccLinkedMealPlanCard: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginTop: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  ccLinkedMealPlanTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.sm, marginBottom: 4 },
+  ccLinkedMealPlanSub: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 8 },
+  ccLinkedMealPlanBtn: { backgroundColor: COLORS.roseGold, borderRadius: RADIUS.full, paddingVertical: 8, alignItems: 'center' },
+  ccLinkedMealPlanBtnText: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.xs },
+  ccLinkedPlanRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 12, marginBottom: 6, borderWidth: 1 },
+  ccLinkedPlanType: { fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 2 },
+  ccLinkedPlanName: { color: COLORS.textSecondary, fontSize: SIZES.xs },
+  ccLinkPlanBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  ccLinkPlanBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  // Meal plan modal carb link
   mpTargetGuide: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   mpTargetGuideTitle: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
   mpTargetGuideRow: { flexDirection: 'row', gap: 8 },
   mpTargetPill: { flex: 1, borderRadius: RADIUS.md, padding: 8, alignItems: 'center', borderWidth: 1, backgroundColor: COLORS.darkCard },
   mpTargetVal: { fontSize: SIZES.md, ...FONTS.bold },
   mpTargetLabel: { color: COLORS.textMuted, fontSize: 9, marginTop: 2 },
-  mpCarbCycleGuide: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
-  mpCarbCycleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 6, borderBottomWidth: 0.5, borderBottomColor: COLORS.darkBorder },
-  mpCarbCycleType: { width: 60, fontSize: SIZES.xs, ...FONTS.bold },
-  mpCarbCycleVal: { flex: 1, color: COLORS.white, fontSize: SIZES.xs },
-  mpCarbCycleDays: { color: COLORS.textMuted, fontSize: 9 },
+  mpCarbLinkSection: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  mpCarbLinkRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  mpCarbLinkChip: { flex: 1, minWidth: 70, borderRadius: RADIUS.md, padding: 10, alignItems: 'center', borderWidth: 1.5 },
+  mpCarbLinkChipText: { fontSize: SIZES.xs, ...FONTS.bold, textAlign: 'center' },
+  mpCarbLinkChipSub: { fontSize: 8, marginTop: 3, textAlign: 'center' },
+  mpCarbTargetHint: { backgroundColor: COLORS.darkCard, borderRadius: RADIUS.md, padding: 10, marginTop: 8, borderWidth: 1, borderColor: COLORS.darkBorder },
+  mpCarbTargetHintText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.semibold },
+  // Carb cycle tab
   ccTodayCard: { borderRadius: RADIUS.lg, padding: 16, marginBottom: 16, borderWidth: 2, backgroundColor: COLORS.darkCard },
   ccTodayTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 8 },
   ccDayTypeBadge: { borderRadius: RADIUS.full, paddingHorizontal: 14, paddingVertical: 5, alignSelf: 'flex-start', marginBottom: 12 },
@@ -2727,12 +2897,7 @@ const styles = StyleSheet.create({
   ccDayType: { fontSize: SIZES.md, ...FONTS.heavy },
   ccDayCarbG: { color: COLORS.white, fontSize: 8, marginTop: 2 },
   ccDayCals: { color: COLORS.textMuted, fontSize: 7, marginTop: 1 },
-  ccSummaryRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  ccSummaryCard: { flex: 1, borderRadius: RADIUS.md, padding: 10, borderWidth: 1 },
-  ccSummaryType: { fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 4 },
-  ccSummaryVal: { color: COLORS.white, fontSize: SIZES.sm, ...FONTS.semibold },
-  ccSummaryCals: { color: COLORS.textMuted, fontSize: SIZES.xs },
-  ccSummaryDays: { color: COLORS.textMuted, fontSize: 9, marginTop: 4 },
+  ccDayLinked: { fontSize: 8, marginTop: 2 },
   ccSection: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   ccSectionTitle: { color: COLORS.white, ...FONTS.bold, fontSize: SIZES.md, marginBottom: 8 },
   ccSectionNote: { color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 12, lineHeight: 16 },
