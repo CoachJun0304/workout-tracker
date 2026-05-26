@@ -673,9 +673,11 @@ export default function CoachHealthScreen({ route, navigation }) {
     };
 
     if (editingCarbPlan) {
-      await supabase.from('carb_cycling_plans').update(payload).eq('id', editingCarbPlan.id);
+      const { error } = await supabase.from('carb_cycling_plans').update(payload).eq('id', editingCarbPlan.id);
+      if (error) { setLoading(false); showAlert('Error saving', error.message); return; }
     } else {
-      await supabase.from('carb_cycling_plans').insert(payload);
+      const { error } = await supabase.from('carb_cycling_plans').insert(payload);
+      if (error) { setLoading(false); showAlert('Error saving', error.message); return; }
     }
 
     setLoading(false);
