@@ -181,7 +181,7 @@ export default function CoachHealthScreen({ route, navigation }) {
           .select('*, meal_plan_items(*)')
           .order('created_at', { ascending: false }),
         supabase.from('carb_cycling_plans').select('*')
-          .or(`client_id.eq.${client.id},created_by.eq.${profile.id}`)
+          .eq('client_id', client.id)
           .order('created_at', { ascending: false }),
       ]);
       setWeightLogs(wRes.data || []);
