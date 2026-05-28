@@ -692,7 +692,163 @@ export default function CoachHealthScreen({ route, navigation }) {
       fetchAll();
     }, null, 'Delete', true);
   }
+async function generateCarbCycleMealPlans(basePlan, carbCyclePlan) {
+    if (!basePlan || !carbCyclePlan) return;
+    const items = basePlan.meal_plan_items || [];
+    if (items.length === 0) {
+      showAlert('Error', 'Base meal plan has no food items'); return;
+    }
 
+    const totalCarbs = items.reduce((s, i) => s + (i.carbs_g || 0), 0);
+    if (totalCarbs === 0) {
+      showAlert('Error', 'Base meal plan has no carb-containing foods'); return;
+    }
+
+    const dayTypes = [
+      { type: 'high', label: 'High Carb', targetCarbs: carbCyclePlan.high_carb_g, targetCals: carbCyclePlan.high_carb_calories },
+      { type: 'medium', label: 'Medium Carb', targetCarbs: carbCyclePlan.medium_carb_g, targetCals: carbCyclePlan.medium_carb_calories },
+      { type: 'low', label: 'Low Carb', targetCarbs: carbCyclePlan.low_carb_g, targetCals: carbCyclePlan.low_carb_calories },
+    ];
+
+    setLoading(true);
+    for (const dayType of dayTypes) {
+      const scaleFactor = dayType.targetCarbs / totalCarbs;
+
+      const scaledItems = items.map(item => {
+        if ((item.carbs_g || 0) > 0) {
+          // Scale carb-containing foods
+          const scaledGrams = +(item.grams * scaleFactor).toFixed(0);
+          const gramsRatio = scaledGrams / item.grams;
+          return {
+            ...item,
+            grams: scaledGrams,
+            carbs_g: +(item.carbs_g * gramsRatio).toFixed(1),
+            protein_g: +(item.protein_g * gramsRatio).toFixed(1),
+            fats_g: +(item.fats_g * gramsRatio).toFixed(1),
+            calories: +(item.calories * gramsRatio).toFixed(0),
+          };
+        }
+        // Keep protein/fat-only foods unchanged
+        return { ...item };
+      });
+
+      const totals = scaledItems.reduce((acc, e) => ({
+        protein: acc.protein + (e.protein_g || 0),
+        carbs: acc.carbs + (e.carbs_g || 0),
+        fats: acc.fats + (e.fats_g || 0),
+        calories: acc.calories + (e.calories || 0),
+      }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
+
+      // Check if a linked plan already exists for this day type
+      const existing = mealPlanTemplates.find(p =>
+        p.carb_cycle_day_type === dayType.type &&
+        p.carb_cycle_plan_id === carbCyclePlan.id
+      );
+
+      if (existing) {
+        // Update existing
+        await supabase.from('meal_plan_templates').update({
+          name: `${basePlan.name} — ${dayType.label}`,
+          total_calories: totals.calories,
+          total_protein_g: totals.protein,
+          total_carbs_g: totals.carbs,
+          total_fats_g: totals.fats,
+        }).eq('id', existing.id);
+        await supabase.from('meal_plan_items').delete().eq('template_id', existing.id);
+        await supabase.from('meal_plan_items').insert(
+          scaledItems.map((item, i) => ({
+            template_id: existing.id,
+            meal_type: item.meal_type,
+            food_name: item.food_name,
+            brand: item.brand || null,
+            food_library_id: item.food_library_id || null,
+            grams: item.grams,
+            protein_g: item.protein_g,
+            carbs_g: item.carbs_g,
+            fats_g: item.fats_g,
+            calories: item.calories,
+            order_index: i,
+          }))
+        );
+      } else {
+        // Create new
+        const { data: newPlan, error } = await supabase.from('meal_plan_templates').insert({
+          name: `${basePlan.name} — ${dayType.label}`,
+          description: `Auto-generated from "${basePlan.name}" · Scale: ${scaleFactor.toFixed(2)}×`,
+          client_id: client.id,
+          created_by: profile.id,
+          is_shared: false,
+          carb_cycle_day_type: dayType.type,
+          carb_cycle_plan_id: carbCyclePlan.id,
+          total_calories: totals.calories,
+          total_protein_g: totals.protein,
+          total_carbs_g: totals.carbs,
+          total_fats_g: totals.fats,
+        }).select().single();
+
+        if (error) { setLoading(false); showAlert('Error', error.message); return; }
+
+        await supabase.from('meal_plan_items').insert(
+          scaledItems.map((item, i) => ({
+            template_id: newPlan.id,
+            meal_type: item.meal_type,
+            food_name: item.food_name,
+            brand: item.brand || null,
+            food_library_id: item.food_library_id || null,
+            grams: item.grams,
+            protein_g: item.protein_g,
+            carbs_g: item.carbs_g,
+            fats_g: item.fats_g,
+            calories: item.calories,
+            order_index: i,
+          }))
+        );
+      }
+    }
+
+    setLoading(false);
+    showAlert('✅ Generated!',
+      `3 meal plans created:\n• ${basePlan.name} — High Carb\n• ${basePlan.name} — Medium Carb\n• ${basePlan.name} — Low Carb`);
+    fetchAll();
+  }
+  async function generateCarbCycleMealPlans(basePlan, carbCyclePlan) {
+    if (!basePlan || !carbCyclePlan) return;
+    const items = basePlan.meal_plan_items || [];
+    if (items.length === 0) { showAlert('Error', 'Base meal plan has no food items'); return; }
+    const totalCarbs = items.reduce((s, i) => s + (i.carbs_g || 0), 0);
+    if (totalCarbs === 0) { showAlert('Error', 'Base meal plan has no carb-containing foods'); return; }
+    const dayTypes = [
+      { type: 'high', label: 'High Carb', targetCarbs: carbCyclePlan.high_carb_g, targetCals: carbCyclePlan.high_carb_calories },
+      { type: 'medium', label: 'Medium Carb', targetCarbs: carbCyclePlan.medium_carb_g, targetCals: carbCyclePlan.medium_carb_calories },
+      { type: 'low', label: 'Low Carb', targetCarbs: carbCyclePlan.low_carb_g, targetCals: carbCyclePlan.low_carb_calories },
+    ];
+    setLoading(true);
+    for (const dayType of dayTypes) {
+      const scaleFactor = dayType.targetCarbs / totalCarbs;
+      const scaledItems = items.map(item => {
+        if ((item.carbs_g || 0) > 0) {
+          const scaledGrams = +(item.grams * scaleFactor).toFixed(0);
+          const gramsRatio = scaledGrams / item.grams;
+          return { ...item, grams: scaledGrams, carbs_g: +(item.carbs_g * gramsRatio).toFixed(1), protein_g: +(item.protein_g * gramsRatio).toFixed(1), fats_g: +(item.fats_g * gramsRatio).toFixed(1), calories: +(item.calories * gramsRatio).toFixed(0) };
+        }
+        return { ...item };
+      });
+      const totals = scaledItems.reduce((acc, e) => ({ protein: acc.protein + (e.protein_g || 0), carbs: acc.carbs + (e.carbs_g || 0), fats: acc.fats + (e.fats_g || 0), calories: acc.calories + (e.calories || 0) }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
+      const existing = mealPlanTemplates.find(p => p.carb_cycle_day_type === dayType.type && p.carb_cycle_plan_id === carbCyclePlan.id);
+      if (existing) {
+        await supabase.from('meal_plan_templates').update({ name: `${basePlan.name} — ${dayType.label}`, total_calories: totals.calories, total_protein_g: totals.protein, total_carbs_g: totals.carbs, total_fats_g: totals.fats }).eq('id', existing.id);
+        await supabase.from('meal_plan_items').delete().eq('template_id', existing.id);
+        await supabase.from('meal_plan_items').insert(scaledItems.map((item, i) => ({ template_id: existing.id, meal_type: item.meal_type, food_name: item.food_name, brand: item.brand || null, food_library_id: item.food_library_id || null, grams: item.grams, protein_g: item.protein_g, carbs_g: item.carbs_g, fats_g: item.fats_g, calories: item.calories, order_index: i })));
+      } else {
+        const { data: newPlan, error } = await supabase.from('meal_plan_templates').insert({ name: `${basePlan.name} — ${dayType.label}`, description: `Auto-generated from "${basePlan.name}" · Scale: ${scaleFactor.toFixed(2)}×`, client_id: client.id, created_by: profile.id, is_shared: false, carb_cycle_day_type: dayType.type, carb_cycle_plan_id: carbCyclePlan.id, total_calories: totals.calories, total_protein_g: totals.protein, total_carbs_g: totals.carbs, total_fats_g: totals.fats }).select().single();
+        if (error) { setLoading(false); showAlert('Error', error.message); return; }
+        await supabase.from('meal_plan_items').insert(scaledItems.map((item, i) => ({ template_id: newPlan.id, meal_type: item.meal_type, food_name: item.food_name, brand: item.brand || null, food_library_id: item.food_library_id || null, grams: item.grams, protein_g: item.protein_g, carbs_g: item.carbs_g, fats_g: item.fats_g, calories: item.calories, order_index: i })));
+      }
+    }
+    setLoading(false);
+    showAlert('✅ Generated!', `3 meal plans created:\n• ${basePlan.name} — High Carb\n• ${basePlan.name} — Medium Carb\n• ${basePlan.name} — Low Carb`);
+    fetchAll();
+  }
   function getTodayCarbCycleTargets() {
     const activePlan = carbCyclePlans.find(p => p.is_active);
     if (!activePlan) return null;
@@ -1295,6 +1451,33 @@ export default function CoachHealthScreen({ route, navigation }) {
                               ))}
                             </View>
                           ))}
+                          {/* Generate from base meal plan */}
+                          <Text style={styles.ccWeekTitle}>⚡ Auto-Generate from Base Plan</Text>
+                          {mealPlanTemplates.filter(p =>
+                            !p.carb_cycle_day_type && p.client_id === client.id
+                          ).length === 0 ? (
+                            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 8 }}>
+                              No base meal plan found. Create a regular meal plan first.
+                            </Text>
+                          ) : (
+                            mealPlanTemplates.filter(p =>
+                              !p.carb_cycle_day_type && p.client_id === client.id
+                            ).map(basePlan => (
+                              <TouchableOpacity key={basePlan.id}
+                                style={styles.ccGenerateBtn}
+                                onPress={() => showConfirm(
+                                  '🔄 Generate Meal Plans',
+                                  `Generate High/Medium/Low carb variants from "${basePlan.name}"?\n\nCarb-containing foods will be scaled proportionally. Protein/fat foods stay the same.`,
+                                  () => generateCarbCycleMealPlans(basePlan, plan),
+                                  null, 'Generate', false
+                                )}
+                                disabled={loading}>
+                                <Text style={styles.ccGenerateBtnText}>
+                                  {loading ? '⏳ Generating...' : `🔄 Generate from "${basePlan.name}"`}
+                                </Text>
+                              </TouchableOpacity>
+                            ))
+                          )}
                           <View style={styles.planActions}>
                             <TouchableOpacity style={styles.planApplyBtn}
                               onPress={() => {
@@ -1509,7 +1692,25 @@ export default function CoachHealthScreen({ route, navigation }) {
                               </View>
                             );
                           })}
-
+{/* Auto-generate from base plan */}
+                          <Text style={styles.ccWeekTitle}>⚡ Auto-Generate from Base Plan</Text>
+                          {mealPlanTemplates.filter(p => !p.carb_cycle_day_type && p.client_id === client.id).length === 0 ? (
+                            <Text style={{ color: COLORS.textMuted, fontSize: SIZES.xs, marginBottom: 8 }}>
+                              No base meal plan found. Create a regular meal plan first.
+                            </Text>
+                          ) : (
+                            mealPlanTemplates.filter(p => !p.carb_cycle_day_type && p.client_id === client.id).map(basePlan => (
+                              <TouchableOpacity key={basePlan.id} style={styles.ccGenerateBtn}
+                                onPress={() => showConfirm('🔄 Generate Meal Plans',
+                                  `Generate High/Medium/Low carb variants from "${basePlan.name}"?\n\nCarb foods scaled proportionally. Protein/fat foods unchanged.`,
+                                  () => generateCarbCycleMealPlans(basePlan, plan), null, 'Generate', false)}
+                                disabled={loading}>
+                                <Text style={styles.ccGenerateBtnText}>
+                                  {loading ? '⏳ Generating...' : `🔄 Generate from "${basePlan.name}"`}
+                                </Text>
+                              </TouchableOpacity>
+                            ))
+                          )}
                           <View style={styles.planActions}>
                             <TouchableOpacity style={styles.planApplyBtn}
                               onPress={async () => {
@@ -2862,7 +3063,11 @@ const styles = StyleSheet.create({
   ccLinkedPlanType: { fontSize: SIZES.xs, ...FONTS.bold, marginBottom: 2 },
   ccLinkedPlanName: { color: COLORS.textSecondary, fontSize: SIZES.xs },
   ccLinkPlanBtn: { backgroundColor: COLORS.roseGoldFaint, borderRadius: RADIUS.full, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.roseGoldMid },
+  ccGenerateBtn: { backgroundColor: '#4ECDC422', borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#4ECDC4' },
+  ccGenerateBtnText: { color: '#4ECDC4', ...FONTS.bold, fontSize: SIZES.sm },
   ccLinkPlanBtnText: { color: COLORS.roseGold, fontSize: SIZES.xs, ...FONTS.bold },
+  ccGenerateBtn: { backgroundColor: '#4ECDC422', borderRadius: RADIUS.full, paddingVertical: 12, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#4ECDC4' },
+  ccGenerateBtnText: { color: '#4ECDC4', ...FONTS.bold, fontSize: SIZES.sm },
   // Meal plan modal carb link
   mpTargetGuide: { backgroundColor: COLORS.darkCard2, borderRadius: RADIUS.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: COLORS.darkBorder },
   mpTargetGuideTitle: { color: COLORS.textSecondary, fontSize: SIZES.xs, ...FONTS.bold, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
