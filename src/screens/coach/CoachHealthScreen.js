@@ -692,125 +692,6 @@ export default function CoachHealthScreen({ route, navigation }) {
       fetchAll();
     }, null, 'Delete', true);
   }
-async function generateCarbCycleMealPlans(basePlan, carbCyclePlan) {
-    if (!basePlan || !carbCyclePlan) return;
-    const items = basePlan.meal_plan_items || [];
-    if (items.length === 0) {
-      showAlert('Error', 'Base meal plan has no food items'); return;
-    }
-
-    const totalCarbs = items.reduce((s, i) => s + (i.carbs_g || 0), 0);
-    if (totalCarbs === 0) {
-      showAlert('Error', 'Base meal plan has no carb-containing foods'); return;
-    }
-
-    const dayTypes = [
-      { type: 'high', label: 'High Carb', targetCarbs: carbCyclePlan.high_carb_g, targetCals: carbCyclePlan.high_carb_calories },
-      { type: 'medium', label: 'Medium Carb', targetCarbs: carbCyclePlan.medium_carb_g, targetCals: carbCyclePlan.medium_carb_calories },
-      { type: 'low', label: 'Low Carb', targetCarbs: carbCyclePlan.low_carb_g, targetCals: carbCyclePlan.low_carb_calories },
-    ];
-
-    setLoading(true);
-    for (const dayType of dayTypes) {
-      const scaleFactor = dayType.targetCarbs / totalCarbs;
-
-      const scaledItems = items.map(item => {
-        if ((item.carbs_g || 0) > 0) {
-          // Scale carb-containing foods
-          const scaledGrams = +(item.grams * scaleFactor).toFixed(0);
-          const gramsRatio = scaledGrams / item.grams;
-          return {
-            ...item,
-            grams: scaledGrams,
-            carbs_g: +(item.carbs_g * gramsRatio).toFixed(1),
-            protein_g: +(item.protein_g * gramsRatio).toFixed(1),
-            fats_g: +(item.fats_g * gramsRatio).toFixed(1),
-            calories: +(item.calories * gramsRatio).toFixed(0),
-          };
-        }
-        // Keep protein/fat-only foods unchanged
-        return { ...item };
-      });
-
-      const totals = scaledItems.reduce((acc, e) => ({
-        protein: acc.protein + (e.protein_g || 0),
-        carbs: acc.carbs + (e.carbs_g || 0),
-        fats: acc.fats + (e.fats_g || 0),
-        calories: acc.calories + (e.calories || 0),
-      }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
-
-      // Check if a linked plan already exists for this day type
-      const existing = mealPlanTemplates.find(p =>
-        p.carb_cycle_day_type === dayType.type &&
-        p.carb_cycle_plan_id === carbCyclePlan.id
-      );
-
-      if (existing) {
-        // Update existing
-        await supabase.from('meal_plan_templates').update({
-          name: `${basePlan.name} — ${dayType.label}`,
-          total_calories: totals.calories,
-          total_protein_g: totals.protein,
-          total_carbs_g: totals.carbs,
-          total_fats_g: totals.fats,
-        }).eq('id', existing.id);
-        await supabase.from('meal_plan_items').delete().eq('template_id', existing.id);
-        await supabase.from('meal_plan_items').insert(
-          scaledItems.map((item, i) => ({
-            template_id: existing.id,
-            meal_type: item.meal_type,
-            food_name: item.food_name,
-            brand: item.brand || null,
-            food_library_id: item.food_library_id || null,
-            grams: item.grams,
-            protein_g: item.protein_g,
-            carbs_g: item.carbs_g,
-            fats_g: item.fats_g,
-            calories: item.calories,
-            order_index: i,
-          }))
-        );
-      } else {
-        // Create new
-        const { data: newPlan, error } = await supabase.from('meal_plan_templates').insert({
-          name: `${basePlan.name} — ${dayType.label}`,
-          description: `Auto-generated from "${basePlan.name}" · Scale: ${scaleFactor.toFixed(2)}×`,
-          client_id: client.id,
-          created_by: profile.id,
-          is_shared: false,
-          carb_cycle_day_type: dayType.type,
-          carb_cycle_plan_id: carbCyclePlan.id,
-          total_calories: totals.calories,
-          total_protein_g: totals.protein,
-          total_carbs_g: totals.carbs,
-          total_fats_g: totals.fats,
-        }).select().single();
-
-        if (error) { setLoading(false); showAlert('Error', error.message); return; }
-
-        await supabase.from('meal_plan_items').insert(
-          scaledItems.map((item, i) => ({
-            template_id: newPlan.id,
-            meal_type: item.meal_type,
-            food_name: item.food_name,
-            brand: item.brand || null,
-            food_library_id: item.food_library_id || null,
-            grams: item.grams,
-            protein_g: item.protein_g,
-            carbs_g: item.carbs_g,
-            fats_g: item.fats_g,
-            calories: item.calories,
-            order_index: i,
-          }))
-        );
-      }
-    }
-
-    setLoading(false);
-    showAlert('✅ Generated!',
-      `3 meal plans created:\n• ${basePlan.name} — High Carb\n• ${basePlan.name} — Medium Carb\n• ${basePlan.name} — Low Carb`);
-    fetchAll();
-  }
   async function generateCarbCycleMealPlans(basePlan, carbCyclePlan) {
     if (!basePlan || !carbCyclePlan) return;
     const items = basePlan.meal_plan_items || [];
@@ -826,12 +707,13 @@ async function generateCarbCycleMealPlans(basePlan, carbCyclePlan) {
     for (const dayType of dayTypes) {
       const scaleFactor = dayType.targetCarbs / totalCarbs;
       const scaledItems = items.map(item => {
-        if ((item.carbs_g || 0) > 0) {
-          const scaledGrams = +(item.grams * scaleFactor).toFixed(0);
-          const gramsRatio = scaledGrams / item.grams;
-          return { ...item, grams: scaledGrams, carbs_g: +(item.carbs_g * gramsRatio).toFixed(1), protein_g: +(item.protein_g * gramsRatio).toFixed(1), fats_g: +(item.fats_g * gramsRatio).toFixed(1), calories: +(item.calories * gramsRatio).toFixed(0) };
+        const { id, template_id, ...rest } = item;
+        if ((rest.carbs_g || 0) > 0) {
+          const scaledGrams = +(rest.grams * scaleFactor).toFixed(0);
+          const gramsRatio = scaledGrams / rest.grams;
+          return { ...rest, grams: scaledGrams, carbs_g: +(rest.carbs_g * gramsRatio).toFixed(1), protein_g: +(rest.protein_g * gramsRatio).toFixed(1), fats_g: +(rest.fats_g * gramsRatio).toFixed(1), calories: +(rest.calories * gramsRatio).toFixed(0) };
         }
-        return { ...item };
+        return { ...rest };
       });
       const totals = scaledItems.reduce((acc, e) => ({ protein: acc.protein + (e.protein_g || 0), carbs: acc.carbs + (e.carbs_g || 0), fats: acc.fats + (e.fats_g || 0), calories: acc.calories + (e.calories || 0) }), { protein: 0, carbs: 0, fats: 0, calories: 0 });
       const existing = mealPlanTemplates.find(p => p.carb_cycle_day_type === dayType.type && p.carb_cycle_plan_id === carbCyclePlan.id);
