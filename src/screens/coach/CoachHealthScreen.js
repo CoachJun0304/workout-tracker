@@ -442,10 +442,10 @@ export default function CoachHealthScreen({ route, navigation }) {
     setPlanItems(p => p.filter((_, i) => i !== idx));
   }
 
-  async function saveMealPlan() {
-    if (!planName.trim()) { showAlert('Error', 'Plan name required'); return; }
-    if (planItems.length === 0) { showAlert('Error', 'Add at least one food item'); return; }
-    setLoading(true);
+    async function saveMealPlan() {
+      if (!planName.trim()) { showAlert('Error', 'Plan name required'); return; }
+      if (planItems.length === 0) { showAlert('Error', 'Add at least one food item'); return; }
+      setLoading(true);
     const totals = planItems.reduce((acc, e) => ({
       protein: acc.protein + (e.protein_g || 0),
       carbs: acc.carbs + (e.carbs_g || 0),
@@ -485,7 +485,10 @@ export default function CoachHealthScreen({ route, navigation }) {
 
     if (planId) {
       const { error: itemsError } = await supabase.from('meal_plan_items').insert(
-        planItems.map((item, i) => ({ ...item, template_id: planId, order_index: i }))
+        planItems.map((item, i) => {
+        const { id, template_id, ...rest } = item;
+        return { ...rest, template_id: planId, order_index: i };
+})
       );
       if (itemsError) { setLoading(false); showAlert('Error', itemsError.message); return; }
     }
